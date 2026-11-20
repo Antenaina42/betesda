@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 380 80" width="380" height="80">
+  <defs>
+    <linearGradient id="betesdaBlue" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0284C7" />
+      <stop offset="100%" stop-color="#0369A1" />
+    </linearGradient>
+    <linearGradient id="betesdaTeal" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2DD4BF" />
+      <stop offset="100%" stop-color="#0D9488" />
+    </linearGradient>
+    <linearGradient id="betesdaNavy" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0F172A" />
+      <stop offset="100%" stop-color="#1E3A8A" />
+    </linearGradient>
+    <filter id="logoShadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0284C7" flood-opacity="0.18"/>
+    </filter>
+  </defs>
+
+  <!-- Medical Emblem -->
+  <g transform="translate(10, 10)">
+    <!-- Rounded Background Card -->
+    <rect x="0" y="0" width="60" height="60" rx="16" fill="#F0F9FF" stroke="#E0F2FE" stroke-width="1.5" filter="url(#logoShadow)" />
+    
+    <!-- Medical Cross (Sapphire Blue) -->
+    <rect x="25" y="13" width="10" height="34" rx="4" fill="url(#betesdaBlue)" />
+    <rect x="13" y="25" width="34" height="10" rx="4" fill="url(#betesdaBlue)" />
+    
+    <!-- Bethesda Wave / Healing Leaf Overlay (Teal) -->
+    <path d="M 12 37 C 22 43, 30 23, 48 23 C 44 33, 35 44, 23 41 Z" 
+          fill="url(#betesdaTeal)" 
+          opacity="0.92" />
+          
+    <!-- Subtle pulse node -->
+    <circle cx="30" cy="30" r="3.2" fill="#FFFFFF" />
+  </g>
+
+  <!-- Typography -->
+  <g transform="translate(84, 18)">
+    <!-- Subtitle: CLINIQUE -->
+    <text x="1" y="16" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-weight="700" font-size="11" fill="#0284C7" letter-spacing="3.5">
+      CLINIQUE
+    </text>
+    
+    <!-- Main Title: BETESDA -->
+    <text x="0" y="38" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-weight="900" font-size="25" letter-spacing="1">
+      <tspan fill="#0F172A">BETES</tspan><tspan fill="#0284C7">DA</tspan>
+    </text>
+    <circle cx="160" cy="30" r="3.5" fill="#0D9488" />
+
+    <!-- Slogan -->
+    <text x="1" y="52" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-weight="500" font-size="10" fill="#64748B" letter-spacing="0.3">
+      Soins, Bienveillance &amp; Gestion Intelligente
+    </text>
+  </g>
+</svg>
