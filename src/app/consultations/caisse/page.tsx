@@ -83,7 +83,7 @@ export default async function ConsultationCaissePage() {
 
   let finalDentalActs = dentalActs;
   if (finalDentalActs.length === 0) {
-    const { DEFAULT_DENTAL_ACTS } = await import('@/app/api/dentistry/acts/route');
+    const { DEFAULT_DENTAL_ACTS } = await import('@/lib/dentistry-acts');
     await prisma.dentalAct.createMany({
       data: DEFAULT_DENTAL_ACTS.map((act) => ({
         clinicId: session.clinicId,
