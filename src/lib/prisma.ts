@@ -60,13 +60,12 @@ export function getDatabaseUrl(): string {
   return cleanDatabaseUrl(process.env.DATABASE_URL);
 }
 
-// Synchroniser process.env.DATABASE_URL pour le moteur Rust interne de Prisma
-const activeUrl = getDatabaseUrl();
-process.env.DATABASE_URL = activeUrl;
+function createPrismaClient(): PrismaClient {
+  // Synchroniser process.env.DATABASE_URL pour le moteur Rust interne de Prisma
+  const activeUrl = getDatabaseUrl();
+  process.env.DATABASE_URL = activeUrl;
 
-export const prisma =
-  globalForPrisma.prisma ??
-  new PrismaClient({
+  return new PrismaClient({
     datasources: {
       db: {
         url: activeUrl,
@@ -74,6 +73,34 @@ export const prisma =
     },
     log: process.env.NODE_ENV === 'development' ? ['warn', 'error'] : ['error'],
   });
+}
 
-if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
+function getPrismaClient(): PrismaClient {
+  if (!globalForPrisma.prisma) {
+    globalForPrisma.prisma = createPrismaClient();
+  }
+  return globalForPrisma.prisma;
+}
+
+// Initialisation paresseuse (lazy) : évite de charger le moteur natif Prisma/Tokio
+// pendant la phase "Collecting page data" de `next build` sur les hébergements mutualisés.
+export const prisma: PrismaClient = new Proxy({} as PrismaClient, {
+  get(_target, prop) {
+    if (
+      prop === 'then' ||
+      prop === 'catch' ||
+      prop === 'finally' ||
+      prop === '__esModule' ||
+      prop === '$$typeof' ||
+      prop === 'default' ||
+      typeof prop === 'symbol'
+    ) {
+      return undefined;
+    }
+    const client = getPrismaClient();
+    const value = Reflect.get(client, prop, client);
+    return typeof value === 'function' ? value.bind(client) : value;
+  },
+});
+
 export default prisma;

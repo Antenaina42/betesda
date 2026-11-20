@@ -2,6 +2,8 @@
 const nextConfig = {
   reactStrictMode: true,
   experimental: {
+    cpus: 1,
+    workerThreads: false,
     serverActions: {
       bodySizeLimit: '10mb',
     },
