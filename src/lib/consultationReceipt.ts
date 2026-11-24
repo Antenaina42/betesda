@@ -150,18 +150,15 @@ export function generateConsultationDualTicketHtml(
   const dateOnlyStr = formatTicketDate(data.date);
   const timeOnlyStr = formatTicketTime(data.date);
   const paymentStr = formatTicketPaymentMethod(data.paymentMethod);
-  const patientFullName = `${data.patient.lastName.toUpperCase()} ${data.patient.firstName}`.trim();
+  const cleanFirstName =
+    data.patient.firstName && data.patient.firstName.trim() !== '-' ? data.patient.firstName.trim() : '';
+  const patientFullName = `${data.patient.lastName.toUpperCase()}${cleanFirstName ? ` ${cleanFirstName}` : ''}`.trim();
   const cashier = data.cashierName || 'Accueil Clinique';
-  const rawDoctor = data.doctorName ? data.doctorName.trim() : 'Medecin consultant';
-  const doctor =
-    rawDoctor !== 'Médecin de consultation' &&
-    rawDoctor !== 'Médecin consultant' &&
-    rawDoctor !== 'Medecin consultant'
-      ? rawDoctor.replace(/^(Dr\.?\s*)+/i, 'Dr. ').startsWith('Dr. ') || rawDoctor.startsWith('Prof.')
-        ? rawDoctor.replace(/^(Dr\.?\s*)+/i, 'Dr. ')
-        : `Dr. ${rawDoctor}`
-      : rawDoctor;
   const orderNumStr = data.orderNumber ? String(data.orderNumber).padStart(3, '0') : '001';
+  const volet2Motif =
+    (data.reason && data.reason.trim()) ||
+    (data.items && data.items.length > 0 ? data.items.map((i) => i.name).join(' + ') : data.actName) ||
+    'Consultation';
 
   const cashTendered = data.cashTendered ? Number(data.cashTendered) : null;
   const changeDue = data.changeDue ? Number(data.changeDue) : null;
@@ -480,13 +477,9 @@ export function generateConsultationDualTicketHtml(
           <span class="row-label">Dossier N° :</span>
           <span class="row-val">${escapeHtml(data.patient.patientNumber)}</span>
         </div>
-        <div class="row" style="margin-bottom: 1px;">
+        <div class="row" style="margin-bottom: 0;">
           <span class="row-label">Tel :</span>
           <span class="row-val">${escapeHtml(data.patient.phone || 'Neant')}</span>
-        </div>
-        <div class="row" style="margin-bottom: 0;">
-          <span class="row-label">Praticien :</span>
-          <span class="row-val">${escapeHtml(doctor)}</span>
         </div>
       </div>
 
@@ -595,26 +588,9 @@ export function generateConsultationDualTicketHtml(
           <span class="row-label">N° Dossier :</span>
           <span class="row-val">${escapeHtml(data.patient.patientNumber)}</span>
         </div>
-        <div class="row" style="margin-bottom: 1px;">
-          <span class="row-label">Genre / Age :</span>
-          <span class="row-val">
-            ${escapeHtml(data.patient.gender === 'MALE' ? 'Masculin' : data.patient.gender === 'FEMALE' ? 'Feminin' : (data.patient.gender || '-'))}
-            ${data.patient.age !== null && data.patient.age !== undefined && data.patient.age !== '-' ? ` - ${escapeHtml(String(data.patient.age))} ans` : ''}
-          </span>
-        </div>
-        <div class="row" style="margin-bottom: 1px;">
-          <span class="row-label">Medecin :</span>
-          <span class="row-val">${escapeHtml(doctor)}</span>
-        </div>
-        ${data.reason ? `
-        <div class="row" style="margin-bottom: 1px;">
-          <span class="row-label">Motif :</span>
-          <span class="row-val">${escapeHtml(data.reason)}</span>
-        </div>
-        ` : ''}
         <div class="row" style="margin-bottom: 0;">
-          <span class="row-label">Actes :</span>
-          <span class="row-val">${escapeHtml(data.items && data.items.length > 0 ? data.items.map((i) => i.name).join(' + ') : data.actName)}</span>
+          <span class="row-label">Motif :</span>
+          <span class="row-val">${escapeHtml(volet2Motif)}</span>
         </div>
       </div>
 

@@ -44,12 +44,18 @@ export default function ConsultationDualTicketPreview({
   const dateStr = formatTicketDateTime(ticketData.date);
   const dateOnlyStr = formatTicketDate(ticketData.date);
   const paymentStr = formatTicketPaymentMethod(ticketData.paymentMethod);
-  const patientFullName = `${ticketData.patient.lastName.toUpperCase()} ${ticketData.patient.firstName}`;
+  const cleanFirstName =
+    ticketData.patient.firstName && ticketData.patient.firstName.trim() !== '-'
+      ? ticketData.patient.firstName.trim()
+      : '';
+  const patientFullName = `${ticketData.patient.lastName.toUpperCase()}${cleanFirstName ? ` ${cleanFirstName}` : ''}`.trim();
   const cashier = ticketData.cashierName || 'Accueil Clinique';
-  const rawDoctor = ticketData.doctorName ? ticketData.doctorName.trim() : 'Médecin consultant';
-  const doctor = (rawDoctor !== 'Médecin consultant' && rawDoctor !== 'Médecin de consultation')
-    ? (rawDoctor.replace(/^(Dr\.?\s*)+/i, 'Dr. ').startsWith('Dr. ') || rawDoctor.startsWith('Prof.') ? rawDoctor.replace(/^(Dr\.?\s*)+/i, 'Dr. ') : `Dr. ${rawDoctor}`)
-    : rawDoctor;
+  const volet2Motif =
+    (ticketData.reason && ticketData.reason.trim()) ||
+    (ticketData.items && ticketData.items.length > 0
+      ? ticketData.items.map((i) => i.name).join(' + ')
+      : ticketData.actName) ||
+    'Consultation';
   const orderNumStr = ticketData.orderNumber
     ? String(ticketData.orderNumber).padStart(3, '0')
     : '001';
@@ -313,12 +319,10 @@ export default function ConsultationDualTicketPreview({
                   <span className="text-slate-500 font-bold">Dossier :</span>
                   <span className="font-bold">{ticketData.patient.patientNumber}</span>
                 </div>
-                {ticketData.reason && (
-                  <div className="flex justify-between">
-                    <span className="text-slate-500 font-bold">Motif :</span>
-                    <span className="text-slate-800">{ticketData.reason}</span>
-                  </div>
-                )}
+                <div className="flex justify-between">
+                  <span className="text-slate-500 font-bold">Motif :</span>
+                  <span className="text-slate-800 text-right">{volet2Motif}</span>
+                </div>
               </div>
 
               {/* GRILLE DÉDIÉE PRISE DES PARAMÈTRES VITAUX */}
