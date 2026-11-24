@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { jwtVerify } from 'jose';
 import { hasModuleAccess } from '@/lib/permissions';
+import { buildPublicUrl } from '@/lib/requestUrl';
 import { RoleType } from '@/types';
 
 const SECRET_KEY = new TextEncoder().encode(
@@ -51,12 +52,12 @@ export async function middleware(request: NextRequest) {
 
   // 1. Utilisateur connecté tentant d'accéder à /login -> Rediriger vers /dashboard
   if (isPublicPath && pathname === '/login' && sessionUser) {
-    return NextResponse.redirect(new URL('/dashboard', request.url));
+    return NextResponse.redirect(buildPublicUrl(request, '/dashboard'));
   }
 
   // 2. Utilisateur non connecté sur une route protégée -> Rediriger vers /login
   if (!isPublicPath && !sessionUser) {
-    const loginUrl = new URL('/login', request.url);
+    const loginUrl = buildPublicUrl(request, '/login');
     return NextResponse.redirect(loginUrl);
   }
 
@@ -66,7 +67,7 @@ export async function middleware(request: NextRequest) {
 
     if (!isAllowed) {
       // Redirection immédiate vers le dashboard avec alerte d'accès non autorisé
-      const redirectUrl = new URL('/dashboard', request.url);
+      const redirectUrl = buildPublicUrl(request, '/dashboard');
       redirectUrl.searchParams.set('unauthorized', '1');
       return NextResponse.redirect(redirectUrl);
     }
