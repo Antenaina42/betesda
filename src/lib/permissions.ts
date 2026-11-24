@@ -7,8 +7,9 @@ export const MODULE_PERMISSIONS: Record<string, RoleType[]> = {
   // Encaissement Consultation & Ticket 2 volets : Accueil, Administrateurs
   '/consultations/caisse': ['SUPER_ADMIN', 'CLINIC_ADMIN', 'RECEPTIONIST', 'PHARMACIST'],
 
-  // Module Pharmacie : Bénéfices réservés à la Direction & Comptabilité
+  // Module Pharmacie : Bénéfices & Tarification (achat/vente) accessibles à Direction & Comptabilité
   '/pharmacy/financials': ['SUPER_ADMIN', 'CLINIC_ADMIN', 'ACCOUNTANT'],
+  '/pharmacy/medicines': ['SUPER_ADMIN', 'CLINIC_ADMIN', 'ACCOUNTANT', 'PHARMACIST'],
   '/pharmacy/consumables': ['SUPER_ADMIN', 'CLINIC_ADMIN', 'RECEPTIONIST', 'PHARMACIST', 'ACCOUNTANT'],
   '/pharmacy/inventory': ['SUPER_ADMIN', 'CLINIC_ADMIN', 'RECEPTIONIST', 'PHARMACIST'],
   '/pharmacy': ['SUPER_ADMIN', 'CLINIC_ADMIN', 'RECEPTIONIST', 'PHARMACIST'],

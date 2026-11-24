@@ -231,10 +231,13 @@ export default async function DashboardPage() {
 
   if (isAdmin) {
     // 1. Soldes exacts des 3 caisses (identique à Gestion Solde /expenses)
+    const isClinicPharmacyExpense = (cat?: string | null) =>
+      cat === 'Dépense Clinique (Pharmacie)' || cat === 'Dépense Dentisterie (Pharmacie)';
+
     const petiteList = allCashTransactions.filter((e) => (e.cashRegister || 'PETITE_CAISSE') === 'PETITE_CAISSE');
     const petitesRecettes = petiteList.filter((e) => e.type === 'INCOME').reduce((s, e) => s + e.amount, 0);
     const petitesSorties = petiteList
-      .filter((e) => e.type === 'EXPENSE' && e.category !== 'Salaires & Paie')
+      .filter((e) => e.type === 'EXPENSE' && e.category !== 'Salaires & Paie' && !isClinicPharmacyExpense(e.category))
       .reduce((s, e) => s + e.amount, 0);
     const petiteCaisse = Math.max(0, petitesRecettes - petitesSorties);
 
@@ -245,7 +248,7 @@ export default async function DashboardPage() {
     const grandeSorties = allCashTransactions
       .filter(
         (e) =>
-          (e.cashRegister === 'GRANDE_CAISSE' || e.category === 'Salaires & Paie') &&
+          (e.cashRegister === 'GRANDE_CAISSE' || e.category === 'Salaires & Paie' || isClinicPharmacyExpense(e.category)) &&
           e.type === 'EXPENSE' &&
           !(e.category || '').toLowerCase().includes('reçu')
       )

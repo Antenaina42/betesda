@@ -158,8 +158,14 @@ export default function ConsultationCaisseClient({
   // Coche Consultation Gratuite (0 Ar)
   const [isFreeConsultation, setIsFreeConsultation] = useState(false);
 
-  // Coche Consultation Week-end (auto-cochée Samedi / Dimanche pour imputation Budget Médecins Week-end)
-  const [isWeekendConsultation, setIsWeekendConsultation] = useState(() => {
+  // Détection automatique Samedi (6) / Dimanche (0) : coché et figé automatiquement le week-end
+  const isTodayWeekend = useMemo(() => {
+    const day = new Date().getDay();
+    return day === 0 || day === 6;
+  }, []);
+
+  // Coche Consultation Week-end (automatiquement cochée & figée le Samedi/Dimanche)
+  const [isWeekendConsultation, setIsWeekendConsultation] = useState<boolean>(() => {
     const day = new Date().getDay();
     return day === 0 || day === 6;
   });
@@ -455,7 +461,7 @@ export default function ConsultationCaisseClient({
         })),
         amount: isFreeConsultation ? 0 : finalAmount,
         isFreeConsultation,
-        isWeekendConsultation,
+        isWeekendConsultation: isTodayWeekend ? true : isWeekendConsultation,
         paymentMethod,
         paymentReference: paymentReference.trim() || 'Néant',
         cashTendered: isFreeConsultation ? 0 : finalAmount,
@@ -528,8 +534,14 @@ export default function ConsultationCaisseClient({
         age: patientAge,
         gender: consult.patient.gender,
       },
-      doctorName: null,
-      specialty: null,
+      doctorName: consult.doctor
+        ? consult.doctor.firstName || consult.doctor.lastName
+          ? `${consult.doctor.title || 'Dr.'} ${consult.doctor.firstName || ''} ${consult.doctor.lastName || ''}`.trim()
+          : consult.doctor.user
+          ? `Dr. ${consult.doctor.user.firstName} ${consult.doctor.user.lastName}`
+          : null
+        : null,
+      specialty: consult.doctor?.specialty?.name || consult.doctor?.specialtyName || null,
       actName: consult.reason || 'Consultation Médicale',
       items: consult.invoice?.items?.map((it: any) => ({
         name: it.description,
@@ -1234,29 +1246,41 @@ export default function ConsultationCaisseClient({
                   />
                 </div>
 
-                {/* Coche Consultation Week-end (Budget dédié Paiement Médecins) */}
-                <label className={`flex items-center justify-between gap-2 p-2.5 rounded-xl border text-xs cursor-pointer transition-colors ${
-                  isWeekendConsultation
+                {/* Coche Consultation Week-end (Verrouillée automatiquement Samedi & Dimanche) */}
+                <label className={`flex items-center justify-between gap-2 p-2.5 rounded-xl border text-xs transition-colors ${
+                  isTodayWeekend ? 'cursor-not-allowed' : 'cursor-pointer'
+                } ${
+                  isWeekendConsultation || isTodayWeekend
                     ? 'bg-violet-50 border-violet-300 text-violet-900'
                     : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100/70'
                 }`}>
                   <div className="flex items-center gap-2">
                     <input
                       type="checkbox"
-                      checked={isWeekendConsultation}
-                      onChange={(e) => setIsWeekendConsultation(e.target.checked)}
-                      className="w-4 h-4 rounded text-violet-600 border-violet-300 focus:ring-violet-500"
+                      checked={isTodayWeekend ? true : isWeekendConsultation}
+                      disabled={isTodayWeekend}
+                      onChange={(e) => {
+                        if (!isTodayWeekend) setIsWeekendConsultation(e.target.checked);
+                      }}
+                      className="w-4 h-4 rounded text-violet-600 border-violet-300 focus:ring-violet-500 disabled:opacity-80 disabled:cursor-not-allowed"
                     />
                     <div>
-                      <span className="font-bold block">Consultation Week-end (Samedi / Dimanche)</span>
+                      <span className="font-bold block">
+                        Consultation Week-end (Samedi / Dimanche)
+                        {isTodayWeekend && (
+                          <span className="ml-1.5 text-[10px] font-black text-violet-700">
+                            • Verrouillé automatiquement aujourd&apos;hui
+                          </span>
+                        )}
+                      </span>
                       <span className="text-[10px] text-slate-500">
-                        Impute automatiquement l'entrée sur le budget séparé « Consultations Week-end » (paiement médecins).
+                        Impute l&apos;entrée dans la caisse séparée « Consultations Week-end » (Accueil ➔ Versement vers Grande Caisse Week-end).
                       </span>
                     </div>
                   </div>
-                  {isWeekendConsultation && (
+                  {(isWeekendConsultation || isTodayWeekend) && (
                     <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-violet-600 text-white shrink-0">
-                      WEEK-END
+                      {isTodayWeekend ? 'WEEK-END (AUTO)' : 'WEEK-END'}
                     </span>
                   )}
                 </label>

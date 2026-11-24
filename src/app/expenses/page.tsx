@@ -37,12 +37,12 @@ export default async function ExpensesPage() {
         settings: true,
       },
     }),
-    // Cloisonnement strict : l'Accueil (RECEPTIONIST) ne voit JAMAIS la Grande Caisse ni la Banque
+    // Cloisonnement strict : l'Accueil (RECEPTIONIST) voit uniquement Petite Caisse + Petite Caisse Week-end (jamais Grande Caisse ni Banque)
     prisma.cashTransaction.findMany({
       where: isReceptionist
         ? {
             clinicId: session.clinicId,
-            cashRegister: 'PETITE_CAISSE',
+            cashRegister: { in: ['PETITE_CAISSE', 'PETITE_CAISSE_WEEKEND'] },
           }
         : {
             clinicId: session.clinicId,
@@ -93,11 +93,13 @@ export default async function ExpensesPage() {
           orderBy: { paymentDate: 'desc' },
           take: 200,
         }),
-    prisma.clinicMedicineRequisition.findMany({
-      where: { clinicId: session.clinicId },
-      orderBy: { date: 'desc' },
-      take: 100,
-    }),
+    isReceptionist
+      ? Promise.resolve([])
+      : prisma.clinicMedicineRequisition.findMany({
+          where: { clinicId: session.clinicId },
+          orderBy: { date: 'desc' },
+          take: 100,
+        }),
     prisma.medicine.findMany({
       where: { clinicId: session.clinicId, isActive: true },
       select: {

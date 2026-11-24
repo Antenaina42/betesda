@@ -28,9 +28,14 @@ import {
   Square,
   TrendingDown,
   TrendingUp,
+  Download,
 } from 'lucide-react';
 import { formatCurrency, formatDate, formatDateTime } from '@/lib/formatters';
 import { AuthUser } from '@/types';
+import {
+  downloadBlankInventorySheetPdf,
+  downloadInventoryBilanPdf,
+} from '@/lib/inventoryReportPdf';
 
 interface MedicineItem {
   id: string;
@@ -146,18 +151,74 @@ export default function PharmacyInventoryClient({
   // Recherche dans l'historique
   const [historySearch, setHistorySearch] = useState('');
 
-  // Fonction d'impression A4 / Téléchargement PDF avec nom de fichier soigné
-  const handlePrintClean = (docTitle?: string | React.MouseEvent) => {
-    const originalTitle = document.title;
-    const title =
-      typeof docTitle === 'string'
-        ? docTitle
-        : `Inventaire_Pharmacie_Betesda_${new Date().toISOString().split('T')[0]}`;
-    document.title = title;
-    window.print();
-    setTimeout(() => {
-      document.title = originalTitle;
-    }, 1200);
+  // Génération PDF A4 directe (jsPDF + autoTable) — Fiche vierge, Bilan en cours, ou Procès-Verbal historique
+  const handleDownloadBlankPdf = () => {
+    if (selectedMedicinesList.length === 0) return;
+    downloadBlankInventorySheetPdf({
+      title: inventoryTitle,
+      operatorName: `${currentUser.firstName} ${currentUser.lastName}`.trim(),
+      items: selectedMedicinesList.map((m) => ({
+        name: m.name,
+        genericName: m.genericName,
+        dosage: m.dosage,
+        form: m.form,
+        location: m.location,
+        currentStock: m.currentStock,
+      })),
+    });
+  };
+
+  const handleDownloadCurrentBilanPdf = () => {
+    if (selectedMedicinesList.length === 0) return;
+    downloadInventoryBilanPdf({
+      title: inventoryTitle,
+      date: new Date(),
+      operatorName: `${currentUser.firstName} ${currentUser.lastName}`.trim(),
+      notes: inventoryNotes.trim() || 'Néant',
+      statusLabel: 'BILAN EN COURS',
+      items: selectedMedicinesList.map((m) => {
+        const itemState = counts[m.id] || { countedStock: m.currentStock, reason: 'Conforme', remark: '' };
+        const diff = itemState.countedStock - m.currentStock;
+        return {
+          name: m.name,
+          dosage: m.dosage,
+          form: m.form,
+          location: m.location,
+          theoreticalStock: m.currentStock,
+          countedStock: itemState.countedStock,
+          difference: diff,
+          financialImpact: diff * m.purchasePrice,
+          motif: itemState.reason || 'Conforme',
+          remark: itemState.remark?.trim() || 'Néant',
+        };
+      }),
+    });
+  };
+
+  const handleDownloadPastInventoryPdf = (inv: PastInventory) => {
+    downloadInventoryBilanPdf({
+      inventoryNumber: inv.inventoryNumber,
+      title: inv.title,
+      date: inv.createdAt,
+      operatorName: inv.createdByName || 'Pharmacien',
+      notes: inv.notes || 'Néant',
+      statusLabel: 'VALIDE & REGULARISE',
+      items: inv.items.map((it) => {
+        const parsed = parseReasonAndRemark(it.reason);
+        return {
+          name: it.medicineName,
+          dosage: it.medicine?.dosage,
+          form: it.medicine?.form,
+          location: it.medicine?.location,
+          theoreticalStock: it.theoreticalStock,
+          countedStock: it.countedStock,
+          difference: it.difference,
+          financialImpact: it.financialImpact,
+          motif: parsed.motif,
+          remark: parsed.remark,
+        };
+      }),
+    });
   };
 
   // -------------------------------------------------------------
@@ -625,17 +686,17 @@ export default function PharmacyInventoryClient({
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
-                      onClick={handlePrintClean}
+                      onClick={handleDownloadBlankPdf}
                       disabled={selectedMedicineIds.size === 0}
                       className={`px-3.5 py-1.5 text-xs font-semibold rounded-xl border flex items-center gap-1.5 transition-colors ${
                         selectedMedicineIds.size > 0
-                          ? 'border-slate-300 text-slate-700 bg-white hover:bg-slate-50'
+                          ? 'border-slate-300 text-slate-700 bg-white hover:bg-slate-50 cursor-pointer'
                           : 'border-slate-200 text-slate-400 bg-slate-50 cursor-not-allowed'
                       }`}
-                      title="Imprimer la fiche de comptage vierge pour contrôle en rayon"
+                      title="Télécharger la fiche de comptage vierge en PDF A4 pour contrôle en rayon"
                     >
-                      <Printer className="w-3.5 h-3.5 text-slate-600" />
-                      <span>Imprimer Fiche Vierge</span>
+                      <Download className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Télécharger Fiche Vierge PDF</span>
                     </button>
 
                     <button
@@ -776,12 +837,12 @@ export default function PharmacyInventoryClient({
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
-                      onClick={handlePrintClean}
+                      onClick={handleDownloadBlankPdf}
                       disabled={selectedMedicineIds.size === 0}
-                      className="px-3.5 py-2 text-xs font-semibold rounded-xl border border-slate-300 text-slate-700 bg-white hover:bg-slate-50 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                      className="px-3.5 py-2 text-xs font-semibold rounded-xl border border-slate-300 text-slate-700 bg-white hover:bg-slate-50 transition-colors flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
                     >
-                      <Printer className="w-3.5 h-3.5" />
-                      <span>Imprimer Fiche Papier</span>
+                      <Download className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Télécharger Fiche PDF A4</span>
                     </button>
 
                     <button
@@ -1165,11 +1226,11 @@ export default function PharmacyInventoryClient({
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
-                      onClick={handlePrintClean}
-                      className="px-3.5 py-2 text-xs font-semibold rounded-xl border border-slate-300 text-slate-700 bg-white hover:bg-slate-50 transition-colors flex items-center gap-1.5"
+                      onClick={handleDownloadCurrentBilanPdf}
+                      className="px-3.5 py-2 text-xs font-bold rounded-xl border border-indigo-300 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition-colors flex items-center gap-1.5 cursor-pointer"
                     >
-                      <Printer className="w-3.5 h-3.5" />
-                      <span>Imprimer Bilan</span>
+                      <Download className="w-3.5 h-3.5" />
+                      <span>Télécharger Bilan PDF A4</span>
                     </button>
 
                     <button
@@ -1362,14 +1423,25 @@ export default function PharmacyInventoryClient({
                           </span>
                         </td>
                         <td className="py-3 px-4 text-center">
-                          <button
-                            type="button"
-                            onClick={() => setSelectedPastInventory(inv)}
-                            className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition-colors inline-flex items-center gap-1"
-                          >
-                            <Eye className="w-3.5 h-3.5" />
-                            <span>Voir le détail</span>
-                          </button>
+                          <div className="inline-flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setSelectedPastInventory(inv)}
+                              className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition-colors inline-flex items-center gap-1 cursor-pointer"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                              <span>Détail</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDownloadPastInventoryPdf(inv)}
+                              className="px-2.5 py-1 text-xs font-bold rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors inline-flex items-center gap-1 cursor-pointer"
+                              title="Télécharger le Procès-Verbal d'inventaire au format PDF A4"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                              <span>PDF A4</span>
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))
@@ -1508,11 +1580,11 @@ export default function PharmacyInventoryClient({
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={handlePrintClean}
-                  className="px-3 py-1.5 text-xs font-semibold rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-50 flex items-center gap-1.5"
+                  onClick={() => handleDownloadPastInventoryPdf(selectedPastInventory)}
+                  className="px-3.5 py-1.5 text-xs font-bold rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 shadow-xs flex items-center gap-1.5 cursor-pointer"
                 >
-                  <Printer className="w-3.5 h-3.5" />
-                  <span>Imprimer Procès-Verbal A4</span>
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Télécharger Procès-Verbal PDF A4</span>
                 </button>
                 <button
                   type="button"

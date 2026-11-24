@@ -104,9 +104,9 @@ export default function Sidebar({ user, clinicName, isOpen, onToggle, onCloseMob
                 icon: ArrowRightLeft,
               },
               {
-                label: 'Bons de sortie Médicaments',
-                href: '/expenses?tab=clinic-medicines',
-                icon: Pill,
+                label: 'Consultations Week-end',
+                href: '/expenses?tab=weekend-consultations',
+                icon: Calendar,
               },
             ],
           },
@@ -249,7 +249,7 @@ export default function Sidebar({ user, clinicName, isOpen, onToggle, onCloseMob
                 icon: Users,
               },
               {
-                label: 'Bons de sortie Médicaments',
+                label: 'Dépenses Pharmacie Clinique',
                 href: '/expenses?tab=clinic-medicines',
                 icon: Pill,
               },
@@ -258,6 +258,11 @@ export default function Sidebar({ user, clinicName, isOpen, onToggle, onCloseMob
           {
             title: 'SUIVI FINANCIER & FACTURATION',
             items: [
+              {
+                label: 'Prix Médicaments (Achat / Vente)',
+                href: '/pharmacy/medicines',
+                icon: Pill,
+              },
               {
                 label: 'Bordereau journalier',
                 href: '/payments?tab=daily-sheet',

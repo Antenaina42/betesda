@@ -63,6 +63,8 @@ export default function MedicinesClient({
   initialCategoryId = '',
 }: MedicinesClientProps) {
   const isAdmin = user ? (user.role === 'SUPER_ADMIN' || user.role === 'CLINIC_ADMIN') : false;
+  const isAccountant = user?.role === 'ACCOUNTANT';
+  const canManagePrices = isAdmin || isAccountant;
   const [medicines, setMedicines] = useState<Medicine[]>(initialMedicines);
   const [allCategories, setAllCategories] = useState<Category[]>(categories);
   const [search, setSearch] = useState(initialSearch);
@@ -71,6 +73,8 @@ export default function MedicinesClient({
   // Modal State
   const [modalOpen, setModalOpen] = useState(false);
   const [editingMedicine, setEditingMedicine] = useState<Medicine | null>(null);
+  const [priceEditMedicine, setPriceEditMedicine] = useState<Medicine | null>(null);
+  const [priceForm, setPriceForm] = useState({ purchasePrice: '', sellingPrice: '' });
   const [deleteConfirmMedicine, setDeleteConfirmMedicine] = useState<Medicine | null>(null);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -266,6 +270,49 @@ export default function MedicinesClient({
     }
   };
 
+  // Open Price Modal (Comptable & Admin : modification rapide Prix Achat / Vente)
+  const handleOpenPriceModal = (med: Medicine) => {
+    if (!canManagePrices) return;
+    setErrorMsg('');
+    setSuccessMsg('');
+    setPriceEditMedicine(med);
+    setPriceForm({
+      purchasePrice: String(med.purchasePrice ?? 0),
+      sellingPrice: String(med.sellingPrice ?? 0),
+    });
+  };
+
+  const handleSubmitPriceUpdate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!priceEditMedicine) return;
+    setErrorMsg('');
+    setSuccessMsg('');
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/medicines/${priceEditMedicine.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          purchasePrice: priceForm.purchasePrice,
+          sellingPrice: priceForm.sellingPrice,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Erreur lors de la mise à jour des prix');
+      }
+      setMedicines((prev) => prev.map((m) => (m.id === priceEditMedicine.id ? data.medicine : m)));
+      setSuccessMsg(
+        `Prix mis à jour pour « ${data.medicine.name} » — Achat : ${formatCurrency(data.medicine.purchasePrice)} | Vente : ${formatCurrency(data.medicine.sellingPrice)}`
+      );
+      setPriceEditMedicine(null);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Erreur mise à jour prix');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // Delete Medicine
   const handleConfirmDelete = async () => {
     if (!deleteConfirmMedicine) return;
@@ -337,15 +384,42 @@ export default function MedicinesClient({
             </button>
           )}
 
-          <Link
-            href="/pharmacy/stock"
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 shadow-2xs transition-all"
-          >
-            <Package className="w-4 h-4" />
-            <span>Entrée de Stock</span>
-          </Link>
+          {!isAccountant && (
+            <Link
+              href="/pharmacy/stock"
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 shadow-2xs transition-all"
+            >
+              <Package className="w-4 h-4" />
+              <span>Entrée de Stock</span>
+            </Link>
+          )}
         </div>
       </div>
+
+      {/* Feedback global (hors modal) */}
+      {successMsg && !modalOpen && !priceEditMedicine && (
+        <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-xs font-bold text-emerald-800 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>{successMsg}</span>
+          </div>
+          <button type="button" onClick={() => setSuccessMsg('')} className="text-emerald-600 hover:text-emerald-800">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {errorMsg && !modalOpen && !priceEditMedicine && (
+        <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-xs font-bold text-rose-800 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+            <span>{errorMsg}</span>
+          </div>
+          <button type="button" onClick={() => setErrorMsg('')} className="text-rose-600 hover:text-rose-800">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* Filters (Search & Categories) */}
       <div className="p-4 bg-white rounded-xl border border-slate-200 shadow-xs flex flex-col md:flex-row gap-3">
@@ -394,18 +468,18 @@ export default function MedicinesClient({
                 <th className="py-3 px-4">Médicament & DCI</th>
                 <th className="py-3 px-4">Catégorie</th>
                 <th className="py-3 px-4">Dosage / Forme</th>
-                {isAdmin && <th className="py-3 px-4">Prix Achat</th>}
+                {canManagePrices && <th className="py-3 px-4">Prix Achat</th>}
                 <th className="py-3 px-4">Prix Vente</th>
                 <th className="py-3 px-4">Stock Actuel</th>
                 <th className="py-3 px-4">Péremption</th>
                 <th className="py-3 px-4">Emplacement</th>
-                {isAdmin && <th className="py-3 px-4 text-center w-24">Actions</th>}
+                {canManagePrices && <th className="py-3 px-4 text-center w-32">Actions</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filteredMedicines.length === 0 ? (
                 <tr>
-                  <td colSpan={isAdmin ? 9 : 7} className="py-12 text-center text-slate-400">
+                  <td colSpan={canManagePrices ? 9 : 7} className="py-12 text-center text-slate-400">
                     <Pill className="w-8 h-8 mx-auto mb-2 opacity-30 text-blue-500" />
                     Aucun médicament ne correspond à vos filtres.
                   </td>
@@ -440,8 +514,8 @@ export default function MedicinesClient({
                         </div>
                         <span className="text-slate-400 text-[11px] block">{m.form}</span>
                       </td>
-                      {isAdmin && (
-                        <td className="py-3 px-4 text-slate-500">
+                      {canManagePrices && (
+                        <td className="py-3 px-4 text-slate-700 font-semibold">
                           {formatCurrency(m.purchasePrice)}
                         </td>
                       )}
@@ -466,25 +540,39 @@ export default function MedicinesClient({
                       <td className="py-3 px-4 text-slate-400 text-[11px]">
                         {m.location || 'Rayon principal'}
                       </td>
-                      {isAdmin && (
+                      {canManagePrices && (
                         <td className="py-3 px-4 text-center">
                           <div className="flex items-center justify-center gap-1">
-                            <button
-                              type="button"
-                              onClick={() => handleOpenEditModal(m)}
-                              title="Modifier ce médicament"
-                              className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
-                            >
-                              <Edit2 className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setDeleteConfirmMedicine(m)}
-                              title="Supprimer ce médicament"
-                              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                            {isAccountant ? (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenPriceModal(m)}
+                                title="Modifier les prix d'achat et de vente"
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100 transition-colors cursor-pointer"
+                              >
+                                <Edit2 className="w-3 h-3" />
+                                <span>Modifier Prix</span>
+                              </button>
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenEditModal(m)}
+                                  title="Modifier ce médicament"
+                                  className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer"
+                                >
+                                  <Edit2 className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setDeleteConfirmMedicine(m)}
+                                  title="Supprimer ce médicament"
+                                  className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </>
+                            )}
                           </div>
                         </td>
                       )}
@@ -868,6 +956,108 @@ export default function MedicinesClient({
                       ? 'Enregistrer les modifications'
                       : 'Enregistrer le Médicament'}
                   </span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL COMPTABLE : MODIFIER PRIX ACHAT & PRIX VENTE */}
+      {priceEditMedicine && (
+        <div
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !loading) setPriceEditMedicine(null);
+          }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs"
+        >
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div>
+                <h3 className="text-base font-extrabold text-slate-900">
+                  Modifier les Prix (Achat &amp; Vente)
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  {priceEditMedicine.name} • {priceEditMedicine.dosage} ({priceEditMedicine.form})
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPriceEditMedicine(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {errorMsg && (
+              <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{errorMsg}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSubmitPriceUpdate} className="space-y-4 text-xs">
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  Prix d&apos;Achat Fournisseur (Ar) *
+                </label>
+                <input
+                  type="number"
+                  required
+                  min="0"
+                  step="50"
+                  value={priceForm.purchasePrice}
+                  onChange={(e) => setPriceForm({ ...priceForm, purchasePrice: e.target.value })}
+                  className="w-full px-3 py-2.5 text-sm font-mono font-bold rounded-xl border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  Prix de Vente Client (Ar) *
+                </label>
+                <input
+                  type="number"
+                  required
+                  min="0"
+                  step="50"
+                  value={priceForm.sellingPrice}
+                  onChange={(e) => setPriceForm({ ...priceForm, sellingPrice: e.target.value })}
+                  className="w-full px-3 py-2.5 text-sm font-mono font-black text-blue-700 rounded-xl border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              {(() => {
+                const buy = parseFloat(priceForm.purchasePrice) || 0;
+                const sell = parseFloat(priceForm.sellingPrice) || 0;
+                const margin = sell - buy;
+                const pct = buy > 0 ? Math.round((margin / buy) * 100) : 0;
+                return (
+                  <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between">
+                    <span className="font-semibold text-slate-600">Marge unitaire estimée :</span>
+                    <span className={`font-black font-mono ${margin >= 0 ? 'text-emerald-700' : 'text-rose-600'}`}>
+                      {margin >= 0 ? '+' : ''}{formatCurrency(margin)} {buy > 0 ? `(${pct}%)` : ''}
+                    </span>
+                  </div>
+                );
+              })()}
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setPriceEditMedicine(null)}
+                  className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 font-semibold"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="inline-flex items-center gap-1.5 px-5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-black shadow-xs disabled:opacity-50 cursor-pointer"
+                >
+                  <Save className="w-4 h-4" />
+                  <span>{loading ? 'Enregistrement...' : 'Enregistrer les Prix'}</span>
                 </button>
               </div>
             </form>

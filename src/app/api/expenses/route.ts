@@ -4,6 +4,33 @@ import { getSession } from '@/lib/auth';
 import { logAuditAction } from '@/lib/audit';
 import { AuditAction, CashTransactionType, PaymentMethod } from '@prisma/client';
 
+/**
+ * Résout proprement la date d'une écriture de caisse :
+ * - Si une date seule "YYYY-MM-DD" est envoyée depuis un <input type="date">,
+ *   on la combine avec l'heure réelle courante (heures/minutes/secondes) au lieu
+ *   de 00:00:00Z (qui provoquait un affichage erroné "01:00" en UTC+1).
+ */
+function resolveTransactionDate(raw?: string | Date | null): Date {
+  const now = new Date();
+  if (!raw) return now;
+  if (raw instanceof Date) return isNaN(raw.getTime()) ? now : raw;
+  const trimmed = String(raw).trim();
+  if (!trimmed) return now;
+  const ymdMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (ymdMatch) {
+    const y = parseInt(ymdMatch[1], 10);
+    const m = parseInt(ymdMatch[2], 10) - 1;
+    const d = parseInt(ymdMatch[3], 10);
+    return new Date(y, m, d, now.getHours(), now.getMinutes(), now.getSeconds(), now.getMilliseconds());
+  }
+  const parsed = new Date(trimmed);
+  return isNaN(parsed.getTime()) ? now : parsed;
+}
+
+function isClinicPharmacyCategory(cat?: string | null): boolean {
+  return cat === 'Dépense Clinique (Pharmacie)' || cat === 'Dépense Dentisterie (Pharmacie)';
+}
+
 export async function GET(request: NextRequest) {
   const session = await getSession();
   if (!session) {
@@ -33,12 +60,12 @@ export async function GET(request: NextRequest) {
       dentalConsultations,
       dentalCashTransactions,
     ] = await Promise.all([
-      // 1. Mouvements de caisse : Cloisonnement strict pour l'Accueil (RECEPTIONIST ne voit que Petite Caisse)
+      // 1. Mouvements de caisse : Cloisonnement strict pour l'Accueil (RECEPTIONIST ne voit que Petite Caisse + Petite Caisse Week-end)
       prisma.cashTransaction.findMany({
         where: isReceptionist
           ? {
               clinicId: session.clinicId,
-              cashRegister: 'PETITE_CAISSE',
+              cashRegister: { in: ['PETITE_CAISSE', 'PETITE_CAISSE_WEEKEND'] },
             }
           : {
               clinicId: session.clinicId,
@@ -369,9 +396,9 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Les opérations bancaires sont réservées à la direction de la clinique.' }, { status: 403 });
       }
 
-      const txDate = transferDate ? new Date(transferDate) : new Date();
+      const txDate = resolveTransactionDate(transferDate);
       const currentYear = new Date().getFullYear();
-      const operatorName = `${session.firstName} ${session.lastName}`;
+      const operatorName = `${session.firstName} ${session.lastName}`.trim();
 
       // -----------------------------------------------------------------------
       // TYPE A : VERSEMENT PETITE CAISSE -> GRANDE CAISSE (ACCUEIL VERS ADMIN)
@@ -388,7 +415,12 @@ export async function POST(request: NextRequest) {
           .filter((t) => t.type === CashTransactionType.INCOME)
           .reduce((s, t) => s + t.amount, 0);
         const petiteExpenses = petiteTxs
-          .filter((t) => t.type === CashTransactionType.EXPENSE && t.category !== 'Salaires & Paie')
+          .filter(
+            (t) =>
+              t.type === CashTransactionType.EXPENSE &&
+              t.category !== 'Salaires & Paie' &&
+              !isClinicPharmacyCategory(t.category)
+          )
           .reduce((s, t) => s + t.amount, 0);
         const currentAvailable = petiteIncome - petiteExpenses;
 
@@ -399,11 +431,12 @@ export async function POST(request: NextRequest) {
         }
 
         const count = await prisma.cashTransaction.count({
-          where: { clinicId: session.clinicId, category: { contains: 'Versement' } },
+          where: { clinicId: session.clinicId, reference: { startsWith: 'VERS-' } },
         });
         const transferRef = `VERS-${currentYear}-${String(count + 1).padStart(4, '0')}`;
-        const sender = senderName || (isReceptionist ? `${session.firstName} ${session.lastName}` : 'Accueil & Caisse');
-        const receiver = receiverName || 'Direction Clinique / Administrateur';
+        // Donneur d'ordre / Émetteur figé sur le nom de la personne connectée
+        const sender = operatorName;
+        const receiver = receiverName || 'Direction Clinique / Comptabilité';
 
         const result = await prisma.$transaction(async (tx) => {
           const outTx = await tx.cashTransaction.create({
@@ -479,7 +512,7 @@ export async function POST(request: NextRequest) {
           where: { clinicId: session.clinicId, reference: { startsWith: 'DEP-BQ' } },
         });
         const transferRef = `DEP-BQ-${currentYear}-${String(countBq + 1).padStart(4, '0')}`;
-        const sender = senderName || `${session.firstName} ${session.lastName}`;
+        const sender = operatorName; // Figé sur le nom de la personne connectée
         const receiver = receiverName || 'Banque';
 
         const result = await prisma.$transaction(async (tx) => {
@@ -611,6 +644,93 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: true, transfer: result });
       }
 
+      // -----------------------------------------------------------------------
+      // TYPE D : VERSEMENT PETITE CAISSE WEEK-END (ACCUEIL) -> GRANDE CAISSE WEEK-END
+      // -----------------------------------------------------------------------
+      if (transferType === 'WEEKEND_PETITE_TO_WEEKEND_GRANDE') {
+        const wePetiteTxs = await prisma.cashTransaction.findMany({
+          where: {
+            clinicId: session.clinicId,
+            cashRegister: 'PETITE_CAISSE_WEEKEND',
+          },
+          select: { type: true, amount: true },
+        });
+        const wePetiteIn = wePetiteTxs
+          .filter((t) => t.type === CashTransactionType.INCOME)
+          .reduce((s, t) => s + t.amount, 0);
+        const wePetiteOut = wePetiteTxs
+          .filter((t) => t.type === CashTransactionType.EXPENSE)
+          .reduce((s, t) => s + t.amount, 0);
+        const currentWePetiteAvailable = wePetiteIn - wePetiteOut;
+
+        if (numAmount > currentWePetiteAvailable) {
+          return NextResponse.json(
+            {
+              error: `Le montant à verser (${numAmount.toLocaleString('fr-FR')} Ar) dépasse le solde disponible en Caisse Week-end Accueil (${Math.max(0, currentWePetiteAvailable).toLocaleString('fr-FR')} Ar).`,
+            },
+            { status: 400 }
+          );
+        }
+
+        const countWe = await prisma.cashTransaction.count({
+          where: { clinicId: session.clinicId, reference: { startsWith: 'VERS-WE-' } },
+        });
+        const transferRef = `VERS-WE-${currentYear}-${String(countWe + 1).padStart(4, '0')}`;
+        const sender = operatorName; // Figé par le nom de l'utilisateur connecté
+        const receiver = receiverName || 'Grande Caisse Week-end (Comptabilité)';
+
+        const result = await prisma.$transaction(async (tx) => {
+          const outTx = await tx.cashTransaction.create({
+            data: {
+              clinicId: session.clinicId,
+              type: CashTransactionType.EXPENSE,
+              category: 'Versement Week-end vers Grande Caisse Week-end',
+              amount: numAmount,
+              paymentMethod: PaymentMethod.CASH,
+              reference: transferRef,
+              description: `Versement Consultations Week-end (${transferRef}) | Remettant : ${sender} ➔ Récepteur : ${receiver} | Opérateur : ${operatorName}${notes ? ` | Motif : ${notes}` : ''}`.slice(0, 255),
+              transactionDate: txDate,
+              performedById: session.id,
+              attachmentUrl: attachmentUrl || null,
+              attachmentName: attachmentName || null,
+              cashRegister: 'PETITE_CAISSE_WEEKEND',
+            },
+            include: { performedBy: { select: { firstName: true, lastName: true } } },
+          });
+
+          const inTx = await tx.cashTransaction.create({
+            data: {
+              clinicId: session.clinicId,
+              type: CashTransactionType.INCOME,
+              category: 'Versement Week-end reçu de l’Accueil',
+              amount: numAmount,
+              paymentMethod: PaymentMethod.CASH,
+              reference: transferRef,
+              description: `Versement Week-end reçu (${transferRef}) | Récepteur : ${receiver} de la part de : ${sender} | Opérateur : ${operatorName}${notes ? ` | Motif : ${notes}` : ''}`.slice(0, 255),
+              transactionDate: txDate,
+              performedById: session.id,
+              attachmentUrl: attachmentUrl || null,
+              attachmentName: attachmentName || null,
+              cashRegister: 'CONSULTATION_WEEKEND',
+            },
+            include: { performedBy: { select: { firstName: true, lastName: true } } },
+          });
+
+          return { outTx, inTx, transferRef, transferType };
+        });
+
+        await logAuditAction({
+          clinicId: session.clinicId,
+          userId: session.id,
+          action: AuditAction.CREATE,
+          entity: 'CashTransaction',
+          entityId: result.outTx.id,
+          details: `Versement Week-end de ${numAmount} Ar de Petite Caisse Week-end vers Grande Caisse Week-end (${result.transferRef})`,
+        });
+
+        return NextResponse.json({ success: true, transfer: result });
+      }
+
       return NextResponse.json({ error: 'Type de transfert non reconnu' }, { status: 400 });
     }
 
@@ -635,7 +755,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Le montant de la consultation week-end doit être supérieur à zéro.' }, { status: 400 });
       }
 
-      const txDate = transactionDate ? new Date(transactionDate) : new Date();
+      const txDate = resolveTransactionDate(transactionDate);
       const currentYear = new Date().getFullYear();
       const weCount = await prisma.cashTransaction.count({
         where: { clinicId: session.clinicId, reference: { startsWith: 'CONS-WE' } },
@@ -646,6 +766,7 @@ export async function POST(request: NextRequest) {
       const cleanDoctor = doctorName && String(doctorName).trim() ? String(doctorName).trim() : 'Médecin de garde';
       const cleanAct = actName && String(actName).trim() ? String(actName).trim() : 'Consultation Week-end';
       const cleanNotes = notes && String(notes).trim() ? String(notes).trim() : 'Néant';
+      const targetWeekendRegister = isReceptionist ? 'PETITE_CAISSE_WEEKEND' : 'CONSULTATION_WEEKEND';
 
       const createdTx = await prisma.cashTransaction.create({
         data: {
@@ -660,7 +781,7 @@ export async function POST(request: NextRequest) {
           performedById: session.id,
           attachmentUrl: attachmentUrl || null,
           attachmentName: attachmentName || null,
-          cashRegister: 'CONSULTATION_WEEKEND',
+          cashRegister: targetWeekendRegister,
         },
         include: {
           performedBy: { select: { firstName: true, lastName: true } },
@@ -709,11 +830,16 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Veuillez sélectionner ou saisir le nom du médecin bénéficiaire.' }, { status: 400 });
       }
 
-      // Calcul du budget disponible Consultations Week-end (Transactions CONSULTATION_WEEKEND + Consultations Samedi/Dimanche existantes)
-      const [weekendTxs, allPaidConsults] = await Promise.all([
+      // Calcul du budget disponible Grande Caisse Consultations Week-end
+      // (exclut les recettes encore dans PETITE_CAISSE_WEEKEND tant qu'elles n'ont pas été versées)
+      const [weekendTxs, petiteWeTxs, allPaidConsults] = await Promise.all([
         prisma.cashTransaction.findMany({
           where: { clinicId: session.clinicId, cashRegister: 'CONSULTATION_WEEKEND' },
           select: { type: true, amount: true, reference: true },
+        }),
+        prisma.cashTransaction.findMany({
+          where: { clinicId: session.clinicId, cashRegister: 'PETITE_CAISSE_WEEKEND' },
+          select: { reference: true },
         }),
         prisma.consultation.findMany({
           where: { patient: { clinicId: session.clinicId } },
@@ -724,7 +850,10 @@ export async function POST(request: NextRequest) {
         }),
       ]);
 
-      const weRefs = new Set(weekendTxs.map((t) => t.reference).filter(Boolean));
+      const weRefs = new Set([
+        ...weekendTxs.map((t) => t.reference).filter(Boolean),
+        ...petiteWeTxs.map((t) => t.reference).filter(Boolean),
+      ]);
       const directWeIncome = weekendTxs
         .filter((t) => t.type === CashTransactionType.INCOME)
         .reduce((s, t) => s + t.amount, 0);
@@ -750,7 +879,7 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      const txDate = transactionDate ? new Date(transactionDate) : new Date();
+      const txDate = resolveTransactionDate(transactionDate);
       const currentYear = new Date().getFullYear();
       const payCount = await prisma.cashTransaction.count({
         where: { clinicId: session.clinicId, reference: { startsWith: 'PAY-MED-WE' } },
@@ -829,7 +958,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Veuillez préciser le motif ou le bénéficiaire de la sortie.' }, { status: 400 });
       }
 
-      const txDate = transactionDate ? new Date(transactionDate) : new Date();
+      const txDate = resolveTransactionDate(transactionDate);
       const count = await prisma.cashTransaction.count({
         where: { clinicId: session.clinicId, type: CashTransactionType.EXPENSE },
       });
@@ -1021,17 +1150,37 @@ export async function POST(request: NextRequest) {
 
     // =========================================================================
     // CAS 3 : DÉPENSE CLINIQUE : PRÉLÈVEMENT DE MÉDICAMENTS DANS LA PHARMACIE
+    // (Débité sur GRANDE_CAISSE et suivi dédié dans le compte Comptable/Admin)
     // =========================================================================
     if (action === 'CLINIC_MEDICINE_REQUISITION') {
+      if (!isAdminOrAccountant) {
+        return NextResponse.json(
+          { error: 'Le prélèvement interne de médicaments clinique est réservé à la comptabilité et à la direction.' },
+          { status: 403 }
+        );
+      }
+
       const {
         department,
-        requestedBy,
+        customDepartment,
         reason,
         items, // [{ medicineId, quantity, unitCost, medicineName }] en unités !
         notes,
         attachmentUrl,
         attachmentName,
       } = body;
+
+      if (department === 'Autre' && (!customDepartment || !String(customDepartment).trim())) {
+        return NextResponse.json(
+          { error: 'Veuillez préciser le service destinataire personnalisé (« Autre »).' },
+          { status: 400 }
+        );
+      }
+
+      const resolvedDepartment =
+        department === 'Autre' && customDepartment && String(customDepartment).trim()
+          ? String(customDepartment).trim()
+          : department || 'Infirmerie & Soins';
 
       if (!items || !items.length) {
         return NextResponse.json({ error: 'Veuillez sélectionner au moins un médicament à prélever.' }, { status: 400 });
@@ -1083,7 +1232,7 @@ export async function POST(request: NextRequest) {
         });
       }
 
-      const isDentistry = (department || '').toLowerCase().includes('dent');
+      const isDentistry = (resolvedDepartment || '').toLowerCase().includes('dent');
       const autoPrefix = isDentistry ? 'DEP-DENT' : 'DEP-CLI';
       const requisitionCategory = isDentistry
         ? 'Dépense Dentisterie (Pharmacie)'
@@ -1097,8 +1246,8 @@ export async function POST(request: NextRequest) {
 
       // Transaction atomique :
       // 1. Décrémentation du stock en unités dans la pharmacie
-      // 2. Enregistrement de la dotation clinique interne
-      // 3. Enregistrement de la dépense dans CashTransaction (Dépense Clinique ou Dentisterie)
+      // 2. Enregistrement de la dépense dans CashTransaction sur GRANDE_CAISSE
+      // 3. Enregistrement de la fiche de réquisition clinique interne
       const [requisition, cashTx] = await prisma.$transaction(async (tx) => {
         // 1. Déduire les unités de la pharmacie
         for (const it of formattedItems) {
@@ -1110,10 +1259,10 @@ export async function POST(request: NextRequest) {
           });
         }
 
-        // 2. Transaction de dépense
-        const operatorName = `${session.firstName} ${session.lastName}`;
-        const requester = requestedBy || operatorName;
-        const targetRegister = isReceptionist ? 'PETITE_CAISSE' : 'PETITE_CAISSE';
+        // 2. Transaction de dépense imputée sur la GRANDE CAISSE (et Demandeur figé sur l'utilisateur connecté)
+        const operatorName = `${session.firstName} ${session.lastName}`.trim();
+        const requester = operatorName;
+        const targetRegister = 'GRANDE_CAISSE';
         const createdCashTx = await tx.cashTransaction.create({
           data: {
             clinicId: session.clinicId,
@@ -1122,7 +1271,7 @@ export async function POST(request: NextRequest) {
             amount: calculatedTotal,
             paymentMethod: PaymentMethod.CASH,
             reference: requisitionNumber,
-            description: `Prélèvement Pharmacie pour ${department || 'Clinique'} (${formattedItems.length} méd.) | Demandeur : ${requester} | Validé par : ${operatorName}${reason ? ` | Motif : ${reason}` : ''}`,
+            description: `Prélèvement Pharmacie pour ${resolvedDepartment} (${formattedItems.length} méd.) | Demandeur : ${requester} | Validé par : ${operatorName}${reason ? ` | Motif : ${reason}` : ''}`.slice(0, 255),
             performedById: session.id,
             attachmentUrl: attachmentUrl || null,
             attachmentName: attachmentName || null,
@@ -1140,8 +1289,8 @@ export async function POST(request: NextRequest) {
           data: {
             clinicId: session.clinicId,
             requisitionNumber,
-            department: department || (isDentistry ? 'Dentisterie' : 'Infirmerie & Soins'),
-            requestedBy: requestedBy || session.firstName + ' ' + session.lastName,
+            department: resolvedDepartment,
+            requestedBy: requester,
             reason: reason || 'Soins internes clinique',
             totalCost: calculatedTotal,
             notes: notes || null,
@@ -1161,7 +1310,7 @@ export async function POST(request: NextRequest) {
         action: AuditAction.CREATE,
         entity: 'ClinicMedicineRequisition',
         entityId: requisition.id,
-        details: `Prélèvement clinique #${requisitionNumber} : ${formattedItems.length} médicaments sortis de pharmacie pour ${department} (${calculatedTotal} Ar)`,
+        details: `Prélèvement clinique #${requisitionNumber} (Grande Caisse) : ${formattedItems.length} médicaments sortis de pharmacie pour ${resolvedDepartment} (${calculatedTotal} Ar)`,
       });
 
       return NextResponse.json({
@@ -1231,7 +1380,7 @@ export async function PATCH(request: NextRequest) {
     if (paymentMethod !== undefined) updateData.paymentMethod = paymentMethod as PaymentMethod;
     if (reference !== undefined) updateData.reference = reference;
     if (cashRegister !== undefined) updateData.cashRegister = cashRegister;
-    if (transactionDate) updateData.transactionDate = new Date(transactionDate);
+    if (transactionDate) updateData.transactionDate = resolveTransactionDate(transactionDate);
     if (attachmentUrl !== undefined) updateData.attachmentUrl = attachmentUrl;
     if (attachmentName !== undefined) updateData.attachmentName = attachmentName;
 

@@ -1,10 +1,11 @@
 /**
  * Utilitaire d'impression pour le double ticket de consultation thermique (80mm)
- * Clinique Betesda
+ * Clinique Betesda — Haute netteté monochrome (100% noir #000 sur fond blanc #fff,
+ * police grasse sans empattement, largeur imprimable 72mm anti-troncature).
  *
- * Sort en 2 étapes / volets :
- * Volet 1 : Ticket / Reçu de réception de paiement de consultation (remis au patient comme preuve d'encaissement)
- * Volet 2 : Fiche navette de consultation avec champs dédiés pour la prise de paramètres vitaux (Tension, Poids, Taille, T°, etc.)
+ * Sort en 2 volets :
+ * Volet 1 : Reçu de paiement de consultation (pour le patient)
+ * Volet 2 : Fiche navette médicale & prise des constantes vitales
  */
 
 export interface ConsultationTicketData {
@@ -18,11 +19,11 @@ export interface ConsultationTicketData {
     taxId?: string | null;
     currency?: string | null;
   };
-  receiptNumber: string; // Ex: REC-CONS-2026-0042
-  orderNumber?: number | string; // Ex: #008 (numéro d'ordre de passage du jour)
+  receiptNumber: string;
+  orderNumber?: number | string;
   consultationId?: string;
   date: string | Date;
-  cashierName?: string | null; // Nom de l'agent d'accueil ou pharmacien
+  cashierName?: string | null;
   patient: {
     id?: string;
     patientNumber: string;
@@ -32,19 +33,19 @@ export interface ConsultationTicketData {
     age?: number | string | null;
     gender?: string | null;
   };
-  doctorName?: string | null; // Médecin affecté
+  doctorName?: string | null;
   specialty?: string | null;
-  actName: string; // Ex: Consultation Médecine Générale
+  actName: string;
   items?: Array<{ name: string; price: number; quantity?: number }>;
   amount: number;
   paymentMethod: string;
   paymentReference?: string | null;
   cashTendered?: number | string | null;
   changeDue?: number | string | null;
-  reason?: string | null; // Motif de la consultation
+  reason?: string | null;
   vitals?: {
     temperature?: number | string | null;
-    bloodPressure?: string | null; // Ex: "120/80" ou "12/8"
+    bloodPressure?: string | null;
     systolicBP?: number | string | null;
     diastolicBP?: number | string | null;
     weight?: number | string | null;
@@ -60,7 +61,9 @@ export function formatTicketMoney(amount: number | null | undefined, currency: s
   if (amount === null || amount === undefined || isNaN(Number(amount))) return `0 ${currency}`;
   const formatted = new Intl.NumberFormat('fr-FR', {
     maximumFractionDigits: 0,
-  }).format(Number(amount));
+  })
+    .format(Number(amount))
+    .replace(/[\u00A0\u202F]/g, ' ');
   return `${formatted} ${currency}`;
 }
 
@@ -68,31 +71,37 @@ export function formatTicketDateTime(date: string | Date | null | undefined): st
   if (!date) return '-';
   const d = typeof date === 'string' ? new Date(date) : date;
   if (isNaN(d.getTime())) return '-';
-  return new Intl.DateTimeFormat('fr-FR', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  }).format(d);
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const yyyy = d.getFullYear();
+  const hh = String(d.getHours()).padStart(2, '0');
+  const min = String(d.getMinutes()).padStart(2, '0');
+  return `${dd}/${mm}/${yyyy} ${hh}:${min}`;
 }
 
 export function formatTicketDate(date: string | Date | null | undefined): string {
   if (!date) return '-';
   const d = typeof date === 'string' ? new Date(date) : date;
   if (isNaN(d.getTime())) return '-';
-  return new Intl.DateTimeFormat('fr-FR', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-  }).format(d);
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const yyyy = d.getFullYear();
+  return `${dd}/${mm}/${yyyy}`;
+}
+
+export function formatTicketTime(date: string | Date | null | undefined): string {
+  if (!date) return '-';
+  const d = typeof date === 'string' ? new Date(date) : date;
+  if (isNaN(d.getTime())) return '-';
+  const hh = String(d.getHours()).padStart(2, '0');
+  const min = String(d.getMinutes()).padStart(2, '0');
+  return `${hh}:${min}`;
 }
 
 export function formatTicketPaymentMethod(method: string): string {
   switch (method) {
     case 'CASH':
-      return 'Espèces (Cash)';
+      return 'Especes (Cash)';
     case 'MOBILE_MONEY':
     case 'MVOLA':
       return 'MVola (Mobile Money)';
@@ -104,11 +113,11 @@ export function formatTicketPaymentMethod(method: string): string {
     case 'CARD':
       return 'Carte Bancaire';
     case 'CHECK':
-      return 'Chèque';
+      return 'Cheque';
     case 'BANK_TRANSFER':
       return 'Virement';
     default:
-      return method || 'Espèces';
+      return method || 'Especes';
   }
 }
 
@@ -123,8 +132,8 @@ function escapeHtml(str: string | null | undefined): string {
 }
 
 /**
- * Génère le code HTML complet du ticket thermique 80mm (Double Volet)
- * Mode: 'all' (les deux volets), 'payment' (reçu uniquement), 'vitals' (fiche navette uniquement)
+ * Génère le code HTML ultra-net pour imprimante thermique 80mm (largeur utile 72mm).
+ * Zéro gris, zéro italique, zéro emoji flou : contraste maximal 100% noir/blanc.
  */
 export function generateConsultationDualTicketHtml(
   data: ConsultationTicketData,
@@ -133,38 +142,40 @@ export function generateConsultationDualTicketHtml(
   const currency = data.clinic?.currency || 'Ar';
   const clinicName = data.clinic?.name || 'CLINIQUE BETESDA';
   const clinicSlogan = data.clinic?.slogan || 'Soins, Bienveillance & Gestion Intelligente';
-  const clinicAddress = data.clinic?.address || 'Lot IVG 35 Rue Pasteur, Antananarivo, Madagascar';
+  const clinicAddress = data.clinic?.address || 'Lot IVG 35 Rue Pasteur, Antananarivo';
   const clinicPhone = data.clinic?.phone || '034 51 365 45 / 034 53 689 59';
-  const clinicTax = data.clinic?.taxId || 'NIF: 3 005 710 430 - N° Stat: 86201 11 2021 0 08027';
+  const clinicTax = data.clinic?.taxId || 'NIF: 3 005 710 430 - Stat: 86201 11 2021 0 08027';
 
   const dateStr = formatTicketDateTime(data.date);
   const dateOnlyStr = formatTicketDate(data.date);
+  const timeOnlyStr = formatTicketTime(data.date);
   const paymentStr = formatTicketPaymentMethod(data.paymentMethod);
-  const patientFullName = `${data.patient.lastName.toUpperCase()} ${data.patient.firstName}`;
+  const patientFullName = `${data.patient.lastName.toUpperCase()} ${data.patient.firstName}`.trim();
   const cashier = data.cashierName || 'Accueil Clinique';
-  const rawDoctor = data.doctorName ? data.doctorName.trim() : 'Médecin de consultation';
-  const doctor = (rawDoctor !== 'Médecin de consultation' && rawDoctor !== 'Médecin consultant')
-    ? (rawDoctor.replace(/^(Dr\.?\s*)+/i, 'Dr. ').startsWith('Dr. ') || rawDoctor.startsWith('Prof.') ? rawDoctor.replace(/^(Dr\.?\s*)+/i, 'Dr. ') : `Dr. ${rawDoctor}`)
-    : rawDoctor;
-  const orderNumStr = data.orderNumber
-    ? String(data.orderNumber).padStart(3, '0')
-    : '001';
+  const rawDoctor = data.doctorName ? data.doctorName.trim() : 'Medecin consultant';
+  const doctor =
+    rawDoctor !== 'Médecin de consultation' &&
+    rawDoctor !== 'Médecin consultant' &&
+    rawDoctor !== 'Medecin consultant'
+      ? rawDoctor.replace(/^(Dr\.?\s*)+/i, 'Dr. ').startsWith('Dr. ') || rawDoctor.startsWith('Prof.')
+        ? rawDoctor.replace(/^(Dr\.?\s*)+/i, 'Dr. ')
+        : `Dr. ${rawDoctor}`
+      : rawDoctor;
+  const orderNumStr = data.orderNumber ? String(data.orderNumber).padStart(3, '0') : '001';
 
   const cashTendered = data.cashTendered ? Number(data.cashTendered) : null;
   const changeDue = data.changeDue ? Number(data.changeDue) : null;
 
-  // Constantes vitals pré-remplies ou vides
-  const bpVal = data.vitals?.bloodPressure || (
-    data.vitals?.systolicBP && data.vitals?.diastolicBP
+  const bpVal =
+    data.vitals?.bloodPressure ||
+    (data.vitals?.systolicBP && data.vitals?.diastolicBP
       ? `${data.vitals.systolicBP}/${data.vitals.diastolicBP}`
-      : ''
-  );
+      : '');
   const tempVal = data.vitals?.temperature ? `${data.vitals.temperature} °C` : '';
   const weightVal = data.vitals?.weight ? `${data.vitals.weight} kg` : '';
   const heightVal = data.vitals?.height ? `${data.vitals.height} cm` : '';
   const pulseVal = data.vitals?.heartRate ? `${data.vitals.heartRate} bpm` : '';
   const spo2Val = data.vitals?.oxygenSaturation ? `${data.vitals.oxygenSaturation} %` : '';
-  const bloodSugarVal = data.vitals?.bloodSugar ? `${data.vitals.bloodSugar} g/L` : '';
 
   const showPayment = mode === 'all' || mode === 'payment';
   const showVitals = mode === 'all' || mode === 'vitals';
@@ -183,214 +194,248 @@ export function generateConsultationDualTicketHtml(
       box-sizing: border-box;
       margin: 0;
       padding: 0;
-      -webkit-print-color-adjust: exact;
-      print-color-adjust: exact;
+      color: #000000 !important;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      -webkit-font-smoothing: none;
+      text-rendering: geometricPrecision;
     }
-    body {
-      font-family: 'Courier New', Courier, monospace, 'Lucida Console', Monaco;
-      font-size: 11px;
-      line-height: 1.35;
-      color: #000;
-      background: #fff;
-      width: 76mm;
+    html, body {
+      width: 80mm;
       max-width: 80mm;
-      margin: 0 auto;
-      padding: 4mm 2.5mm;
+      background: #ffffff;
+      color: #000000;
+      font-family: 'Arial', 'Helvetica Neue', 'Liberation Sans', 'DejaVu Sans', sans-serif;
+      font-size: 12px;
+      line-height: 1.35;
+      font-weight: 700;
     }
     .ticket-container {
-      width: 100%;
+      width: 72mm;
+      max-width: 72mm;
+      margin: 0 auto;
+      padding: 2.5mm 1mm 8mm 1mm;
+      background: #ffffff;
     }
-    .center {
-      text-align: center;
-    }
-    .right {
-      text-align: right;
-    }
-    .bold {
-      font-weight: bold;
-    }
+    .center { text-align: center; }
+    .right { text-align: right; }
+    .bold { font-weight: 900; }
+    .upper { text-transform: uppercase; }
+
     .header {
       text-align: center;
       margin-bottom: 5px;
     }
     .clinic-title {
-      font-size: 15px;
+      font-size: 16px;
       font-weight: 900;
-      letter-spacing: 0.5px;
+      letter-spacing: 0.4px;
       text-transform: uppercase;
-      margin-bottom: 1px;
+      line-height: 1.2;
+      margin-bottom: 2px;
     }
     .clinic-subtitle {
-      font-size: 8.5px;
-      font-style: italic;
-      color: #333;
+      font-size: 10.5px;
+      font-weight: 700;
       margin-bottom: 3px;
     }
     .clinic-info {
-      font-size: 8.5px;
-      color: #444;
-      line-height: 1.25;
+      font-size: 10.5px;
+      font-weight: 700;
+      line-height: 1.3;
     }
+
     .sep-solid {
-      border-top: 1.5px solid #000;
-      margin: 5px 0;
-    }
-    .sep-double {
-      border-top: 2.5px double #000;
+      border-top: 2px solid #000000;
       margin: 6px 0;
     }
     .sep-dashed {
-      border-top: 1px dashed #444;
+      border-top: 1.5px dashed #000000;
       margin: 5px 0;
     }
+
     .badge-volet {
-      display: inline-block;
-      border: 1.5px solid #000;
-      padding: 2px 7px;
+      display: block;
+      width: 100%;
+      border: 2px solid #000000;
+      background: #000000;
+      color: #ffffff !important;
+      padding: 4px 6px;
       font-weight: 900;
-      font-size: 11px;
+      font-size: 12px;
       text-transform: uppercase;
-      margin: 3px auto 4px auto;
+      text-align: center;
       letter-spacing: 0.5px;
+      margin: 4px 0 3px 0;
     }
+    .badge-sub {
+      font-size: 10px;
+      font-weight: 800;
+      text-transform: uppercase;
+      text-align: center;
+      margin-bottom: 3px;
+    }
+
     .row {
       display: flex;
       justify-content: space-between;
       align-items: flex-start;
-      margin-bottom: 2.5px;
-      font-size: 10.5px;
+      gap: 6px;
+      margin-bottom: 3px;
+      font-size: 11.5px;
+      line-height: 1.3;
     }
     .row-label {
-      font-weight: bold;
-      color: #222;
+      font-weight: 700;
       flex-shrink: 0;
     }
     .row-val {
       text-align: right;
+      font-weight: 800;
       word-break: break-word;
     }
-    .total-box {
-      border: 1.5px solid #000;
+
+    .patient-box {
+      border: 2px solid #000000;
       padding: 5px 6px;
-      margin: 6px 0;
-      background: #fafafa;
+      margin: 5px 0;
+      background: #ffffff;
+    }
+    .patient-name {
+      font-size: 13.5px;
+      font-weight: 900;
+      text-transform: uppercase;
+      margin-bottom: 2px;
+    }
+
+    .total-box {
+      border: 2.5px solid #000000;
+      padding: 6px 7px;
+      margin: 7px 0;
+      background: #ffffff;
+    }
+    .total-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
     }
     .total-title {
-      font-size: 10px;
-      font-weight: bold;
+      font-size: 12px;
+      font-weight: 900;
+      text-transform: uppercase;
     }
     .total-amount {
-      font-size: 16px;
+      font-size: 17px;
       font-weight: 900;
       text-align: right;
     }
+
     .status-stamp {
-      border: 1px solid #000;
-      padding: 2px 6px;
       display: inline-block;
-      font-weight: bold;
-      font-size: 10px;
-      margin: 4px 0;
+      border: 2px solid #000000;
+      padding: 3px 8px;
+      font-weight: 900;
+      font-size: 11px;
+      margin: 5px 0;
       text-transform: uppercase;
-    }
-    /* Ligne de découpe thermique */
-    .cut-line {
-      margin: 10px 0;
-      text-align: center;
-      position: relative;
-    }
-    .cut-line-dashes {
-      border-top: 2px dashed #000;
-      margin-bottom: 4px;
-    }
-    .cut-text {
-      font-size: 8.5px;
-      font-weight: bold;
-      letter-spacing: 1px;
-      text-transform: uppercase;
-      color: #333;
+      letter-spacing: 0.3px;
     }
 
-    /* Volet 2 : Fiche navette & Paramètres */
-    .order-number-banner {
-      border: 2px solid #000;
-      padding: 4px 6px;
-      margin: 5px 0;
+    .cut-line {
+      margin: 12px 0;
       text-align: center;
-      background: #f4f4f4;
+    }
+    .cut-line-dashes {
+      border-top: 2px dashed #000000;
+      margin: 4px 0;
+    }
+    .cut-text {
+      font-size: 10.5px;
+      font-weight: 900;
+      letter-spacing: 0.6px;
+      text-transform: uppercase;
+    }
+
+    /* Volet 2 */
+    .order-number-banner {
+      border: 2.5px solid #000000;
+      padding: 5px 6px;
+      margin: 6px 0;
+      text-align: center;
+      background: #ffffff;
     }
     .order-label {
-      font-size: 8.5px;
-      font-weight: bold;
+      font-size: 10.5px;
+      font-weight: 900;
       text-transform: uppercase;
     }
     .order-val {
-      font-size: 20px;
+      font-size: 24px;
       font-weight: 900;
       letter-spacing: 1.5px;
-      line-height: 1.1;
+      line-height: 1.15;
+      margin: 2px 0;
     }
+    .order-date {
+      font-size: 10.5px;
+      font-weight: 800;
+    }
+
     .vitals-grid {
-      border: 1.5px solid #000;
+      border: 2px solid #000000;
       margin: 6px 0;
-      padding: 5px;
-      background: #fff;
+      padding: 5px 6px;
+      background: #ffffff;
     }
     .vitals-grid-title {
       font-weight: 900;
-      font-size: 10px;
+      font-size: 11px;
       text-transform: uppercase;
       text-align: center;
-      border-bottom: 1px solid #000;
-      padding-bottom: 3px;
+      border-bottom: 2px solid #000000;
+      padding-bottom: 4px;
       margin-bottom: 4px;
-      letter-spacing: 0.5px;
     }
     .param-row {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 3px 0;
-      border-bottom: 1px dotted #888;
-      font-size: 10px;
+      padding: 4px 0;
+      border-bottom: 1.5px dashed #000000;
+      font-size: 11.5px;
     }
     .param-row:last-child {
       border-bottom: none;
     }
     .param-name {
-      font-weight: bold;
-      display: flex;
-      align-items: center;
-      gap: 3px;
+      font-weight: 800;
     }
     .param-box {
-      border: 1px solid #333;
-      padding: 1px 6px;
-      min-width: 65px;
-      height: 18px;
+      border: 1.5px solid #000000;
+      padding: 2px 6px;
+      min-width: 82px;
+      min-height: 22px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      font-weight: bold;
-      font-size: 10px;
-      background: #fafafa;
-    }
-    .param-fill {
       font-weight: 900;
-      color: #000;
+      font-size: 11.5px;
+      background: #ffffff;
     }
+
     .signature-area {
-      border: 1px dashed #666;
-      padding: 4px 6px;
+      border: 1.5px solid #000000;
+      padding: 5px 6px;
       margin-top: 6px;
-      font-size: 8.5px;
+      font-size: 10.5px;
+      font-weight: 800;
     }
     .footer-note {
-      font-size: 8px;
+      font-size: 10px;
+      font-weight: 800;
       text-align: center;
-      color: #444;
-      margin-top: 5px;
-      line-height: 1.25;
+      margin-top: 6px;
+      line-height: 1.3;
     }
   </style>
 </head>
@@ -398,30 +443,26 @@ export function generateConsultationDualTicketHtml(
   <div class="ticket-container">
 
     ${showPayment ? `
-    <!-- ============================================================= -->
-    <!-- VOLET 1 : REÇU DE PAIEMENT DE CONSULTATION (POUR LE PATIENT)   -->
-    <!-- ============================================================= -->
     <div class="section-volet-1">
       <div class="header">
         <div class="clinic-title">${escapeHtml(clinicName)}</div>
-        <div class="clinic-subtitle">${escapeHtml(clinicSlogan)}</div>
+        ${clinicSlogan ? `<div class="clinic-subtitle">${escapeHtml(clinicSlogan)}</div>` : ''}
         <div class="clinic-info">
           ${escapeHtml(clinicAddress)}<br>
-          Tél : ${escapeHtml(clinicPhone)} • ${escapeHtml(clinicTax)}
+          Tel : ${escapeHtml(clinicPhone)}<br>
+          ${escapeHtml(clinicTax)}
         </div>
       </div>
 
       <div class="sep-solid"></div>
 
-      <div class="center">
-        <div class="badge-volet">VOLET 1 : REÇU DE PAIEMENT</div>
-        <div style="font-size: 8.5px; font-weight: bold; color: #333;">CONSERVER COMME JUSTIFICATIF</div>
-      </div>
+      <div class="badge-volet">VOLET 1 : RECU DE PAIEMENT</div>
+      <div class="badge-sub">CONSERVER COMME JUSTIFICATIF</div>
 
       <div class="sep-dashed"></div>
 
       <div class="row">
-        <span class="row-label">Reçu N° :</span>
+        <span class="row-label">Recu N° :</span>
         <span class="row-val bold">${escapeHtml(data.receiptNumber)}</span>
       </div>
       <div class="row">
@@ -429,80 +470,78 @@ export function generateConsultationDualTicketHtml(
         <span class="row-val">${escapeHtml(dateStr)}</span>
       </div>
       <div class="row">
-        <span class="row-label">Caissier(ère) :</span>
+        <span class="row-label">Caissier(ere) :</span>
         <span class="row-val">${escapeHtml(cashier)}</span>
       </div>
 
-      <div class="sep-dashed"></div>
-
-      <div class="row">
-        <span class="row-label">PATIENT :</span>
-        <span class="row-val bold">${escapeHtml(patientFullName)}</span>
+      <div class="patient-box">
+        <div class="patient-name">${escapeHtml(patientFullName)}</div>
+        <div class="row" style="margin-bottom: 1px;">
+          <span class="row-label">Dossier N° :</span>
+          <span class="row-val">${escapeHtml(data.patient.patientNumber)}</span>
+        </div>
+        <div class="row" style="margin-bottom: 1px;">
+          <span class="row-label">Tel :</span>
+          <span class="row-val">${escapeHtml(data.patient.phone || 'Neant')}</span>
+        </div>
+        <div class="row" style="margin-bottom: 0;">
+          <span class="row-label">Praticien :</span>
+          <span class="row-val">${escapeHtml(doctor)}</span>
+        </div>
       </div>
-      <div class="row">
-        <span class="row-label">Dossier N° :</span>
-        <span class="row-val">${escapeHtml(data.patient.patientNumber)}</span>
-      </div>
-      ${data.patient.phone ? `
-      <div class="row">
-        <span class="row-label">Téléphone :</span>
-        <span class="row-val">${escapeHtml(data.patient.phone)}</span>
-      </div>
-      ` : ''}
-
-      <div class="sep-dashed"></div>
 
       ${data.items && data.items.length > 1 ? `
-      <div style="margin: 4px 0 2px 0; font-size: 9px; font-weight: bold; text-transform: uppercase; color: #222;">
-        Actes &amp; Prestations facturés (${data.items.length}) :
+      <div style="margin: 4px 0 3px 0; font-size: 11px; font-weight: 900; text-transform: uppercase;">
+        Actes factures (${data.items.length}) :
       </div>
-      ${data.items.map(it => `
-      <div class="row" style="font-size: 9.5px; margin: 1px 0;">
-        <span class="row-label">• ${escapeHtml(it.name)}${it.quantity && it.quantity > 1 ? ` (x${it.quantity})` : ''}</span>
+      ${data.items.map((it) => `
+      <div class="row" style="font-size: 11px; margin-bottom: 2px;">
+        <span class="row-label">- ${escapeHtml(it.name)}${it.quantity && it.quantity > 1 ? ` (x${it.quantity})` : ''}</span>
         <span class="row-val bold">${formatTicketMoney(it.price * (it.quantity || 1), currency)}</span>
       </div>
       `).join('')}
       ` : `
       <div class="row">
-        <span class="row-label">Acte médical :</span>
+        <span class="row-label">Acte medical :</span>
         <span class="row-val bold">${escapeHtml(data.actName)}</span>
       </div>
       `}
+
       ${Number(data.amount) === 0 ? `
-      <div class="total-box" style="border: 2px dashed #000; padding: 5px; background: #fff;">
-        <div style="font-weight: 900; font-size: 13px; text-align: center; text-transform: uppercase; letter-spacing: 0.5px;">
+      <div class="total-box" style="text-align: center;">
+        <div style="font-weight: 900; font-size: 14px; text-transform: uppercase;">
           CONSULTATION GRATUITE (0 Ar)
         </div>
-        <div style="font-size: 9.5px; font-weight: 800; text-align: center; color: #111; margin-top: 2px;">
-          PRISE EN CHARGE CLINIQUE GRACIEUSE
+        <div style="font-size: 10.5px; font-weight: 800; margin-top: 2px;">
+          PRISE EN CHARGE CLINIQUE
         </div>
       </div>
-      <div class="center" style="margin-top: 4px;">
-        <span class="status-stamp" style="font-weight: 900; border: 2px solid #000;">★ CONSULTATION EXONÉRÉE • ACCUEIL ★</span>
+      <div class="center">
+        <span class="status-stamp">CONSULTATION EXONEREE</span>
       </div>
       ` : `
       <div class="total-box">
-        <div class="row" style="margin-bottom: 0;">
-          <span class="total-title">TOTAL PAYÉ :</span>
+        <div class="total-row">
+          <span class="total-title">TOTAL PAYE :</span>
           <span class="total-amount">${formatTicketMoney(data.amount, currency)}</span>
         </div>
       </div>
 
       <div class="row">
-        <span class="row-label">Règlement :</span>
+        <span class="row-label">Reglement :</span>
         <span class="row-val bold">${escapeHtml(paymentStr)}</span>
       </div>
       ${data.paymentReference ? `
       <div class="row">
-        <span class="row-label">Réf. Trans. :</span>
+        <span class="row-label">Ref. Trans. :</span>
         <span class="row-val bold">${escapeHtml(data.paymentReference)}</span>
       </div>
-      ` : (data.paymentMethod !== 'CASH' ? `
+      ` : data.paymentMethod !== 'CASH' ? `
       <div class="row" style="margin-top: 3px; align-items: flex-end;">
-        <span class="row-label">Réf. Trans. :</span>
-        <span class="row-val" style="border-bottom: 1.5px dotted #333; min-width: 135px; display: inline-block; height: 14px;">&nbsp;</span>
+        <span class="row-label">Ref. Trans. :</span>
+        <span class="row-val" style="border-bottom: 1.5px solid #000; min-width: 120px; display: inline-block; height: 14px;">&nbsp;</span>
       </div>
-      ` : '')}
+      ` : ''}
       ${cashTendered !== null ? `
       <div class="row">
         <span class="row-label">Montant remis :</span>
@@ -514,8 +553,8 @@ export function generateConsultationDualTicketHtml(
       </div>
       ` : ''}
 
-      <div class="center" style="margin-top: 4px;">
-        <span class="status-stamp">✓ PAIEMENT VALIDÉ &amp; ENCAISSÉ</span>
+      <div class="center">
+        <span class="status-stamp">[OK] PAIEMENT VALIDE &amp; ENCAISSE</span>
       </div>
       `}
 
@@ -527,134 +566,100 @@ export function generateConsultationDualTicketHtml(
     ` : ''}
 
     ${mode === 'all' ? `
-    <!-- ============================================================= -->
-    <!-- LIGNE DE DÉCOUPE / PERFORATION THERMIQUE                      -->
-    <!-- ============================================================= -->
     <div class="cut-line">
       <div class="cut-line-dashes"></div>
-      <div class="cut-text">✂ - - - DÉCOUPE / VOLET CONSULTATION - - - ✂</div>
-      <div class="cut-line-dashes" style="margin-top: 4px;"></div>
+      <div class="cut-text">--- DECOUPE / VOLET CONSULTATION ---</div>
+      <div class="cut-line-dashes"></div>
     </div>
     ` : ''}
 
     ${showVitals ? `
-    <!-- ============================================================= -->
-    <!-- VOLET 2 : FICHE NAVETTE DE PRISE DE CONSTANTES & CONSULTATION -->
-    <!-- ============================================================= -->
     <div class="section-volet-2">
       <div class="center">
-        <div style="font-size: 13px; font-weight: 900; text-transform: uppercase;">
+        <div style="font-size: 14px; font-weight: 900; text-transform: uppercase;">
           ${escapeHtml(clinicName)}
         </div>
-        <div class="badge-volet" style="margin-top: 2px;">
-          VOLET 2 : FICHE NAVETTE MÉDICALE
-        </div>
-        <div style="font-size: 8.5px; font-weight: bold; color: #222;">
-          À PRÉSENTER AU CABINET DE CONSULTATION
-        </div>
       </div>
+      <div class="badge-volet">VOLET 2 : FICHE NAVETTE MEDICALE</div>
+      <div class="badge-sub">A PRESENTER AU CABINET DE CONSULTATION</div>
 
-      <!-- BANNIÈRE NUMÉRO DE PASSAGE -->
       <div class="order-number-banner">
         <div class="order-label">N° DE PASSAGE DU JOUR</div>
         <div class="order-val">#${escapeHtml(orderNumStr)}</div>
-        <div style="font-size: 8.5px; color: #444;">${escapeHtml(dateOnlyStr)} • Heure : ${escapeHtml(dateStr.split(' ')[1] || '')}</div>
+        <div class="order-date">${escapeHtml(dateOnlyStr)} - Heure : ${escapeHtml(timeOnlyStr)}</div>
       </div>
 
-      <div class="row">
-        <span class="row-label">PATIENT :</span>
-        <span class="row-val bold" style="font-size: 12px;">${escapeHtml(patientFullName)}</span>
-      </div>
-      <div class="row">
-        <span class="row-label">N° Dossier :</span>
-        <span class="row-val bold">${escapeHtml(data.patient.patientNumber)}</span>
-      </div>
-      <div class="row">
-        <span class="row-label">Genre / Âge :</span>
-        <span class="row-val">
-          ${escapeHtml(data.patient.gender === 'MALE' ? 'Masculin' : data.patient.gender === 'FEMALE' ? 'Féminin' : (data.patient.gender || '-'))}
-          ${data.patient.age ? ` • ${escapeHtml(String(data.patient.age))} ans` : ''}
-        </span>
-      </div>
-      ${data.reason ? `
-      <div class="row">
-        <span class="row-label">Motif :</span>
-        <span class="row-val">${escapeHtml(data.reason)}</span>
-      </div>
-      ` : ''}
-      <div class="row">
-        <span class="row-label">Actes demandés :</span>
-        <span class="row-val bold" style="font-size: 10px;">
-          ${escapeHtml(data.items && data.items.length > 0 ? data.items.map(i => i.name).join(' + ') : data.actName)}
-        </span>
-      </div>
-
-      <!-- GRILLE DÉDIÉE PRISE DES PARAMÈTRES VITAUX -->
-      <div class="vitals-grid">
-        <div class="vitals-grid-title">
-          ★ PRISE DES PARAMÈTRES VITAUX (CONSTANTES) ★
+      <div class="patient-box">
+        <div class="patient-name">${escapeHtml(patientFullName)}</div>
+        <div class="row" style="margin-bottom: 1px;">
+          <span class="row-label">N° Dossier :</span>
+          <span class="row-val">${escapeHtml(data.patient.patientNumber)}</span>
         </div>
-
-        <!-- Tension -->
-        <div class="param-row">
-          <span class="param-name">🩺 Tension Artérielle (TA) :</span>
-          <span class="param-box ${bpVal ? 'param-fill' : ''}">
-            ${bpVal ? escapeHtml(bpVal) + ' mmHg' : '&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;/&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; mmHg'}
+        <div class="row" style="margin-bottom: 1px;">
+          <span class="row-label">Genre / Age :</span>
+          <span class="row-val">
+            ${escapeHtml(data.patient.gender === 'MALE' ? 'Masculin' : data.patient.gender === 'FEMALE' ? 'Feminin' : (data.patient.gender || '-'))}
+            ${data.patient.age !== null && data.patient.age !== undefined && data.patient.age !== '-' ? ` - ${escapeHtml(String(data.patient.age))} ans` : ''}
           </span>
         </div>
-
-        <!-- Poids -->
-        <div class="param-row">
-          <span class="param-name">⚖️ Poids :</span>
-          <span class="param-box ${weightVal ? 'param-fill' : ''}">
-            ${weightVal ? escapeHtml(weightVal) : '&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; kg'}
-          </span>
+        <div class="row" style="margin-bottom: 1px;">
+          <span class="row-label">Medecin :</span>
+          <span class="row-val">${escapeHtml(doctor)}</span>
         </div>
-
-        <!-- Taille -->
-        <div class="param-row">
-          <span class="param-name">📏 Taille :</span>
-          <span class="param-box ${heightVal ? 'param-fill' : ''}">
-            ${heightVal ? escapeHtml(heightVal) : '&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; cm'}
-          </span>
+        ${data.reason ? `
+        <div class="row" style="margin-bottom: 1px;">
+          <span class="row-label">Motif :</span>
+          <span class="row-val">${escapeHtml(data.reason)}</span>
         </div>
-
-        <!-- Température -->
-        <div class="param-row">
-          <span class="param-name">🌡️ Température (T°) :</span>
-          <span class="param-box ${tempVal ? 'param-fill' : ''}">
-            ${tempVal ? escapeHtml(tempVal) : '&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; °C'}
-          </span>
-        </div>
-
-        <!-- Pouls / Fréquence cardiaque -->
-        <div class="param-row">
-          <span class="param-name">❤️ Pouls / Fréq. Card. :</span>
-          <span class="param-box ${pulseVal ? 'param-fill' : ''}">
-            ${pulseVal ? escapeHtml(pulseVal) : '&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; bpm'}
-          </span>
-        </div>
-
-        <!-- SpO2 -->
-        <div class="param-row">
-          <span class="param-name">🫁 Saturation O2 (SpO2) :</span>
-          <span class="param-box ${spo2Val ? 'param-fill' : ''}">
-            ${spo2Val ? escapeHtml(spo2Val) : '&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; %'}
-          </span>
-        </div>
-      </div>
-
-      <!-- Signature Soignant / Infirmier -->
-      <div class="signature-area">
+        ` : ''}
         <div class="row" style="margin-bottom: 0;">
-          <span>Infirmier(ère) : ________________</span>
-          <span>Heure : ____:____</span>
+          <span class="row-label">Actes :</span>
+          <span class="row-val">${escapeHtml(data.items && data.items.length > 0 ? data.items.map((i) => i.name).join(' + ') : data.actName)}</span>
         </div>
       </div>
 
-      <div class="footer-note" style="margin-top: 6px; font-weight: bold; border-top: 1px dashed #666; padding-top: 4px;">
-        ⚠️ À remettre obligatoirement au médecin praticien<br>
-        lors de votre entrée en salle de consultation.
+      <div class="vitals-grid">
+        <div class="vitals-grid-title">PARAMETRES VITAUX (CONSTANTES)</div>
+
+        <div class="param-row">
+          <span class="param-name">Tension (TA) :</span>
+          <span class="param-box">${bpVal ? escapeHtml(bpVal) + ' mmHg' : '_____ / _____'}</span>
+        </div>
+
+        <div class="param-row">
+          <span class="param-name">Poids :</span>
+          <span class="param-box">${weightVal ? escapeHtml(weightVal) : '________ kg'}</span>
+        </div>
+
+        <div class="param-row">
+          <span class="param-name">Taille :</span>
+          <span class="param-box">${heightVal ? escapeHtml(heightVal) : '________ cm'}</span>
+        </div>
+
+        <div class="param-row">
+          <span class="param-name">Temperature :</span>
+          <span class="param-box">${tempVal ? escapeHtml(tempVal) : '________ °C'}</span>
+        </div>
+
+        <div class="param-row">
+          <span class="param-name">Pouls / FC :</span>
+          <span class="param-box">${pulseVal ? escapeHtml(pulseVal) : '_______ bpm'}</span>
+        </div>
+
+        <div class="param-row">
+          <span class="param-name">SpO2 (O2) :</span>
+          <span class="param-box">${spo2Val ? escapeHtml(spo2Val) : '________ %'}</span>
+        </div>
+      </div>
+
+      <div class="signature-area">
+        <div>Infirmier(ere) : ______________________</div>
+        <div style="margin-top: 4px;">Heure prise : _____ : _____</div>
+      </div>
+
+      <div class="footer-note" style="border-top: 1.5px dashed #000000; padding-top: 5px;">
+        A remettre obligatoirement au medecin praticien<br>
+        lors de votre entree en salle de consultation.
       </div>
     </div>
     ` : ''}
@@ -688,7 +693,7 @@ export function printConsultationDualTicket(
     iframe.style.top = '-9999px';
     iframe.style.left = '-9999px';
     iframe.style.width = '80mm';
-    iframe.style.height = '150mm';
+    iframe.style.height = 'auto';
     iframe.style.border = 'none';
     iframe.style.opacity = '0';
     iframe.style.pointerEvents = 'none';
@@ -716,6 +721,6 @@ export function printConsultationDualTicket(
         window.print();
         resolve(false);
       }
-    }, 280);
+    }, 300);
   });
 }

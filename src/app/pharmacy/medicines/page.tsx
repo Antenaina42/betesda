@@ -41,8 +41,11 @@ export default async function MedicinesPage({ searchParams }: MedicinesPageProps
     prisma.medicineCategory.findMany({ orderBy: { name: 'asc' } }),
   ]);
 
-  const isAdmin = session.role === 'SUPER_ADMIN' || session.role === 'CLINIC_ADMIN';
-  const sanitizedMedicines = isAdmin
+  const canViewPurchasePrice =
+    session.role === 'SUPER_ADMIN' ||
+    session.role === 'CLINIC_ADMIN' ||
+    session.role === 'ACCOUNTANT';
+  const sanitizedMedicines = canViewPurchasePrice
     ? medicines
     : medicines.map((m) => ({ ...m, purchasePrice: 0 }));
 

@@ -274,10 +274,10 @@ export default function ExpensesClient({
 
   const resolveTabFromParam = (param: string | null | undefined, isRec: boolean): ExpensesTab => {
     if (param === 'transfers') return 'transfers';
-    if (param === 'clinic-medicines') return 'clinic-medicines';
+    if (param === 'weekend-consultations' || param === 'weekend') return 'weekend-consultations';
     if (!isRec) {
+      if (param === 'clinic-medicines') return 'clinic-medicines';
       if (param === 'bank') return 'bank';
-      if (param === 'weekend-consultations' || param === 'weekend') return 'weekend-consultations';
       if (param === 'payroll') return 'payroll';
       if (param === 'dentistry' || param === 'dentist') return 'dentistry';
     }
@@ -430,21 +430,37 @@ export default function ExpensesClient({
   const [weekendDoctorFilter, setWeekendDoctorFilter] = useState('ALL');
   const [printedWeekendPayment, setPrintedWeekendPayment] = useState<ExpenseTx | null>(null);
 
+  // Nom complet de l'utilisateur connecté (figé pour émetteur / demandeur)
+  const connectedUserFullName =
+    `${currentUser.firstName || ''} ${currentUser.lastName || ''}`.trim() || 'Opérateur';
+
+  // Helper heure exacte : combine la date choisie (YYYY-MM-DD) avec l'heure locale réelle
+  // afin d'éviter le décalage minuit UTC (qui affichait 01:00)
+  const combineDateWithCurrentTime = (dateYmd: string): string => {
+    const now = new Date();
+    if (!dateYmd || !/^\d{4}-\d{2}-\d{2}$/.test(dateYmd.trim())) {
+      return now.toISOString();
+    }
+    const [y, m, d] = dateYmd.trim().split('-').map((n) => parseInt(n, 10));
+    return new Date(y, m - 1, d, now.getHours(), now.getMinutes(), now.getSeconds()).toISOString();
+  };
+
   // =========================================================================
-  // 1b. MODAL TRANSFERTS INTER-COMPTES (PETITE CAISSE, GRANDE CAISSE, BANQUE)
+  // 1b. MODAL TRANSFERTS INTER-COMPTES (PETITE CAISSE, GRANDE CAISSE, BANQUE, WEEK-END)
   // =========================================================================
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [transferType, setTransferType] = useState<
-    'PETITE_CAISSE_TO_GRANDE_CAISSE' | 'GRANDE_CAISSE_TO_BANQUE' | 'BANQUE_TO_GRANDE_CAISSE'
+    | 'PETITE_CAISSE_TO_GRANDE_CAISSE'
+    | 'GRANDE_CAISSE_TO_BANQUE'
+    | 'BANQUE_TO_GRANDE_CAISSE'
+    | 'WEEKEND_PETITE_TO_WEEKEND_GRANDE'
   >('PETITE_CAISSE_TO_GRANDE_CAISSE');
   const [transferForm, setTransferForm] = useState({
     amount: '',
-    senderName: isReceptionist
-      ? `${currentUser.firstName || ''} ${currentUser.lastName || ''}`.trim() || 'Accueil & Caisse'
-      : 'Accueil & Caisse (Caissière)',
+    senderName: connectedUserFullName,
     receiverName: currentUser.role === 'SUPER_ADMIN' || currentUser.role === 'CLINIC_ADMIN'
-      ? `${currentUser.firstName || ''} ${currentUser.lastName || ''}`.trim() || 'Direction Clinique / Administrateur'
-      : 'Direction Clinique / Administrateur',
+      ? connectedUserFullName
+      : 'Direction Clinique / Comptabilité',
     notes: 'Versement journalier des recettes de la Petite Caisse vers la Grande Caisse',
     transferDate: new Date().toISOString().split('T')[0],
     attachmentUrl: '',
@@ -522,9 +538,8 @@ export default function ExpensesClient({
   // =========================================================================
   const [showRequisitionModal, setShowRequisitionModal] = useState(false);
   const [requisitionDept, setRequisitionDept] = useState('Dentisterie');
-  const [requisitionRequester, setRequisitionRequester] = useState(
-    `${currentUser.firstName} ${currentUser.lastName}`
-  );
+  const [customRequisitionDept, setCustomRequisitionDept] = useState('');
+  const [requisitionRequester, setRequisitionRequester] = useState(connectedUserFullName);
   const [requisitionReason, setRequisitionReason] = useState('Matériel et soins bucco-dentaires');
   const [requisitionCart, setRequisitionCart] = useState<
     Array<{
@@ -585,12 +600,16 @@ export default function ExpensesClient({
     return cashTransfersOut.reduce((sum, e) => sum + e.amount, 0);
   }, [cashTransfersOut]);
 
-  // Menues dépenses de fonctionnement de l'Accueil (hors versements et hors salaires qui incombent à la Direction)
+  const isClinicPharmacyCategory = (cat?: string | null) =>
+    cat === 'Dépense Clinique (Pharmacie)' || cat === 'Dépense Dentisterie (Pharmacie)';
+
+  // Menues dépenses de fonctionnement de l'Accueil (hors versements, hors salaires et hors prélèvements pharmacie clinique imputés en Grande Caisse)
   const depensesPetiteCaisseHorsTransfert = useMemo(() => {
     return petiteCaisseList
       .filter((e) =>
         e.type === 'EXPENSE' &&
         e.category !== 'Salaires & Paie' &&
+        !isClinicPharmacyCategory(e.category) &&
         !((e.category || '').toLowerCase().includes('versement') || (e.reference && e.reference.startsWith('VERS')))
       )
       .reduce((sum, e) => sum + e.amount, 0);
@@ -608,7 +627,7 @@ export default function ExpensesClient({
   }, [recettesPetiteCaisse, totalPetiteCaisseExpenses]);
 
 
-  // 2. GRANDE CAISSE (COMPTE ADMINISTRATEUR)
+  // 2. GRANDE CAISSE (COMPTE ADMINISTRATEUR / COMPTABLE)
   const grandeCaisseList = useMemo(() => {
     return expenses.filter((e) => e.cashRegister === 'GRANDE_CAISSE');
   }, [expenses]);
@@ -620,11 +639,11 @@ export default function ExpensesClient({
       .reduce((sum, e) => sum + e.amount, 0);
   }, [grandeCaisseList]);
 
-  // Décaissements et Salaires payés par la Grande Caisse
+  // Décaissements, Salaires & Prélèvements Pharmacie Clinique payés par la Grande Caisse
   const totalGrandeCaisseExpenses = useMemo(() => {
     return expenses
       .filter((e) =>
-        (e.cashRegister === 'GRANDE_CAISSE' || e.category === 'Salaires & Paie') &&
+        (e.cashRegister === 'GRANDE_CAISSE' || e.category === 'Salaires & Paie' || isClinicPharmacyCategory(e.category)) &&
         e.type === 'EXPENSE' &&
         !(e.category || '').toLowerCase().includes('reçu')
       )
@@ -752,8 +771,19 @@ export default function ExpensesClient({
   }, [expenses]);
 
   // Liste formatée des médecins disponibles pour les paiements Consultations Week-end
+  // Combine les médecins enregistrés (Doctor) + tout employé de catégorie « Médecin » dans /users
   const doctorOptions = useMemo(() => {
-    return (doctors || []).map((d: any) => {
+    const result: Array<{ id: string; name: string; specialty: string; label: string }> = [];
+    const seen = new Set<string>();
+
+    const normalizeKey = (raw: string) =>
+      raw
+        .toLowerCase()
+        .replace(/^(dr\.?|prof\.?)\s+/i, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    (doctors || []).forEach((d: any) => {
       const fullName =
         d.firstName || d.lastName
           ? `${d.title || 'Dr.'} ${d.firstName || ''} ${d.lastName || ''}`.trim()
@@ -761,18 +791,70 @@ export default function ExpensesClient({
           ? `Dr. ${d.user.firstName} ${d.user.lastName}`.trim()
           : 'Médecin consultant';
       const spec = d.specialty?.name || d.specialtyName || 'Médecine Générale';
-      return {
-        id: d.id,
-        name: fullName,
-        specialty: spec,
-        label: `${fullName} (${spec})`,
-      };
+      const key = normalizeKey(fullName);
+      if (!seen.has(key)) {
+        seen.add(key);
+        result.push({
+          id: d.id,
+          name: fullName,
+          specialty: spec,
+          label: `${fullName} (${spec})`,
+        });
+      }
     });
-  }, [doctors]);
+
+    (employees || [])
+      .filter((emp) => emp.isActive !== false && /^m[eé]decin/i.test((emp.position || '').trim()))
+      .forEach((emp) => {
+        const fullName = `Dr. ${emp.firstName} ${emp.lastName}`.trim();
+        const dashIdx = (emp.position || '').indexOf(' — ');
+        const spec = dashIdx !== -1 ? emp.position.slice(dashIdx + 3).trim() : 'Médecine Générale';
+        const key = normalizeKey(fullName);
+        if (!seen.has(key)) {
+          seen.add(key);
+          result.push({
+            id: `emp-${emp.id}`,
+            name: fullName,
+            specialty: spec || 'Médecine Générale',
+            label: `${fullName} (${spec || 'Médecine Générale'})`,
+          });
+        }
+      });
+
+    return result;
+  }, [doctors, employees]);
 
   // =========================================================================
-  // GESTION À PART : BUDGET CONSULTATIONS WEEK-END & PAIEMENTS MÉDECINS
+  // GESTION À PART : PETITE CAISSE WEEK-END (ACCUEIL) & GRANDE CAISSE WEEK-END
   // =========================================================================
+  const petiteCaisseWeekendList = useMemo(() => {
+    return expenses.filter((e) => e.cashRegister === 'PETITE_CAISSE_WEEKEND');
+  }, [expenses]);
+
+  const petiteWeekendIncomes = useMemo(() => {
+    return petiteCaisseWeekendList
+      .filter((e) => e.type === 'INCOME')
+      .sort((a, b) => new Date(b.transactionDate).getTime() - new Date(a.transactionDate).getTime());
+  }, [petiteCaisseWeekendList]);
+
+  const petiteWeekendTransfersOut = useMemo(() => {
+    return petiteCaisseWeekendList
+      .filter((e) => e.type === 'EXPENSE')
+      .sort((a, b) => new Date(b.transactionDate).getTime() - new Date(a.transactionDate).getTime());
+  }, [petiteCaisseWeekendList]);
+
+  const totalPetiteWeekendIncome = useMemo(() => {
+    return petiteWeekendIncomes.reduce((s, e) => s + e.amount, 0);
+  }, [petiteWeekendIncomes]);
+
+  const totalPetiteWeekendTransferred = useMemo(() => {
+    return petiteWeekendTransfersOut.reduce((s, e) => s + e.amount, 0);
+  }, [petiteWeekendTransfersOut]);
+
+  const soldeDisponiblePetiteCaisseWeekend = useMemo(() => {
+    return Math.max(0, totalPetiteWeekendIncome - totalPetiteWeekendTransferred);
+  }, [totalPetiteWeekendIncome, totalPetiteWeekendTransferred]);
+
   const weekendDirectIncomes = useMemo(() => {
     return expenses.filter(
       (e) => e.cashRegister === 'CONSULTATION_WEEKEND' && e.type === 'INCOME'
@@ -803,7 +885,10 @@ export default function ExpensesClient({
     };
 
     const dayNames = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
-    const txRefs = new Set(weekendDirectIncomes.map((t) => t.reference).filter(Boolean));
+    const txRefs = new Set([
+      ...weekendDirectIncomes.map((t) => t.reference).filter(Boolean),
+      ...petiteWeekendIncomes.map((t) => t.reference).filter(Boolean),
+    ]);
     const list: WeekendEntry[] = [];
 
     weekendDirectIncomes.forEach((tx) => {
@@ -812,15 +897,16 @@ export default function ExpensesClient({
       const docMatch = desc.match(/Médecin\s*:\s*([^|]+)/i);
       const patMatch = desc.match(/Patient\s*:\s*([^|]+)/i) || desc.match(/-\s*([^(|]+)\s*\(/);
       const actMatch = desc.match(/Acte\s*:\s*([^|]+)/i) || desc.match(/\(([^)]+)\)/);
+      const isWeTransfer = Boolean(tx.reference && tx.reference.startsWith('VERS-WE'));
       list.push({
         id: `tx-${tx.id}`,
         date: String(tx.transactionDate),
         dayLabel: dayNames[d.getDay()] || 'Week-end',
         monthKey: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`,
         ref: tx.reference || 'CONS-WE',
-        patientName: patMatch ? patMatch[1].trim() : 'Néant',
-        doctorName: docMatch ? docMatch[1].trim() : 'Médecin de garde',
-        actName: actMatch ? actMatch[1].trim() : tx.category || 'Consultation Week-end',
+        patientName: isWeTransfer ? 'Versement Accueil (Week-end)' : patMatch ? patMatch[1].trim() : 'Néant',
+        doctorName: isWeTransfer ? 'Caisse Accueil Week-end' : docMatch ? docMatch[1].trim() : 'Médecin de garde',
+        actName: isWeTransfer ? tx.category || 'Versement Week-end reçu' : actMatch ? actMatch[1].trim() : tx.category || 'Consultation Week-end',
         amount: tx.amount,
         paymentMethod: tx.paymentMethod || 'CASH',
         operatorName: tx.performedBy ? `${tx.performedBy.firstName} ${tx.performedBy.lastName}` : 'Caisse',
@@ -859,7 +945,7 @@ export default function ExpensesClient({
     });
 
     return list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [weekendDirectIncomes, initialWeekendConsultations]);
+  }, [weekendDirectIncomes, petiteWeekendIncomes, initialWeekendConsultations]);
 
   const totalWeekendIncome = useMemo(() => {
     return allWeekendEntries.reduce((sum, e) => sum + e.amount, 0);
@@ -929,8 +1015,8 @@ export default function ExpensesClient({
 
     return expenses
       .filter((e) => {
-        // Exclure le budget Consultations Week-end (onglet dédié)
-        if (e.cashRegister === 'CONSULTATION_WEEKEND') return false;
+        // Exclure le budget Consultations Week-end (Petite & Grande Caisse Week-end ont leur onglet dédié)
+        if (e.cashRegister === 'CONSULTATION_WEEKEND' || e.cashRegister === 'PETITE_CAISSE_WEEKEND') return false;
 
         // Exclure les transferts inter-caisses de l'onglet Dépenses (ils ont leur onglet dédié Transferts / Versements)
         if (isTransferTx(e)) return false;
@@ -1287,6 +1373,7 @@ export default function ExpensesClient({
         body: JSON.stringify({
           action: 'STANDARD_EXPENSE',
           ...expenseForm,
+          transactionDate: combineDateWithCurrentTime(expenseForm.transactionDate),
           beneficiary: expenseForm.beneficiary.trim() || 'Néant',
           reference: expenseForm.reference.trim() || '',
         }),
@@ -1345,7 +1432,7 @@ export default function ExpensesClient({
           doctorName: weekendIncomeForm.doctorName.trim() || 'Médecin de garde',
           actName: weekendIncomeForm.actName.trim() || 'Consultation Week-end',
           paymentMethod: weekendIncomeForm.paymentMethod,
-          transactionDate: weekendIncomeForm.transactionDate,
+          transactionDate: combineDateWithCurrentTime(weekendIncomeForm.transactionDate),
           notes: weekendIncomeForm.notes.trim() || 'Néant',
         }),
       });
@@ -1409,7 +1496,7 @@ export default function ExpensesClient({
           doctorName: chosenDoctor,
           amount: numAmount,
           paymentMethod: weekendDoctorPayForm.paymentMethod,
-          transactionDate: weekendDoctorPayForm.transactionDate,
+          transactionDate: combineDateWithCurrentTime(weekendDoctorPayForm.transactionDate),
           weekendPeriod: weekendDoctorPayForm.weekendPeriod.trim() || 'Week-end',
           notes: weekendDoctorPayForm.notes.trim() || 'Néant',
         }),
@@ -1494,6 +1581,13 @@ export default function ExpensesClient({
       return;
     }
 
+    if (transferType === 'WEEKEND_PETITE_TO_WEEKEND_GRANDE' && numAmount > soldeDisponiblePetiteCaisseWeekend) {
+      setError(
+        `Le montant du versement week-end (${formatCurrency(numAmount)}) ne peut pas dépasser le solde disponible en Caisse Week-end Accueil (${formatCurrency(soldeDisponiblePetiteCaisseWeekend)}).`
+      );
+      return;
+    }
+
     if (transferType === 'GRANDE_CAISSE_TO_BANQUE' && numAmount > soldeDisponibleGrandeCaisse) {
       setError(
         `Le montant du dépôt (${formatCurrency(numAmount)}) ne peut pas dépasser le solde disponible au coffre Grande Caisse (${formatCurrency(soldeDisponibleGrandeCaisse)}).`
@@ -1510,6 +1604,12 @@ export default function ExpensesClient({
 
     setLoading(true);
 
+    const lockedSender =
+      transferType === 'BANQUE_TO_GRANDE_CAISSE'
+        ? bankSettings.bankName || 'Banque'
+        : connectedUserFullName;
+    const exactTransferDate = combineDateWithCurrentTime(transferForm.transferDate);
+
     try {
       const res = await fetch('/api/expenses', {
         method: 'POST',
@@ -1518,6 +1618,8 @@ export default function ExpensesClient({
           action: 'CASH_TRANSFER',
           transferType,
           ...transferForm,
+          senderName: lockedSender,
+          transferDate: exactTransferDate,
         }),
       });
 
@@ -1535,6 +1637,8 @@ export default function ExpensesClient({
       const titleLabel =
         transferType === 'PETITE_CAISSE_TO_GRANDE_CAISSE'
           ? 'Versement Petite Caisse ➔ Grande Caisse'
+          : transferType === 'WEEKEND_PETITE_TO_WEEKEND_GRANDE'
+          ? 'Versement Caisse Week-end Accueil ➔ Grande Caisse Week-end'
           : transferType === 'GRANDE_CAISSE_TO_BANQUE'
           ? 'Dépôt Grande Caisse ➔ Banque'
           : 'Retrait Banque ➔ Grande Caisse';
@@ -1548,9 +1652,9 @@ export default function ExpensesClient({
       setPrintedTransfer({
         ref: data.transfer?.transferRef || 'VERS-2026',
         amount: numAmount,
-        senderName: transferForm.senderName,
+        senderName: lockedSender,
         receiverName: transferForm.receiverName,
-        date: transferForm.transferDate,
+        date: exactTransferDate,
         notes: transferForm.notes,
         attachmentUrl: transferForm.attachmentUrl,
         attachmentName: transferForm.attachmentName,
@@ -1558,12 +1662,16 @@ export default function ExpensesClient({
         sourceLabel:
           transferType === 'PETITE_CAISSE_TO_GRANDE_CAISSE'
             ? 'Petite Caisse (Compte Accueil)'
+            : transferType === 'WEEKEND_PETITE_TO_WEEKEND_GRANDE'
+            ? 'Caisse Consultations Week-end (Accueil)'
             : transferType === 'GRANDE_CAISSE_TO_BANQUE'
             ? 'Grande Caisse (Coffre Direction)'
             : 'Banque',
         destLabel:
           transferType === 'PETITE_CAISSE_TO_GRANDE_CAISSE'
             ? 'Grande Caisse (Coffre Direction)'
+            : transferType === 'WEEKEND_PETITE_TO_WEEKEND_GRANDE'
+            ? 'Grande Caisse Consultations Week-end (Comptabilité)'
             : transferType === 'GRANDE_CAISSE_TO_BANQUE'
             ? 'Banque'
             : 'Grande Caisse (Coffre Direction)',
@@ -1572,8 +1680,8 @@ export default function ExpensesClient({
       // Reset
       setTransferForm({
         amount: '',
-        senderName: isReceptionist ? `${currentUser.firstName || ''} ${currentUser.lastName || ''}`.trim() : 'Accueil & Caisse',
-        receiverName: 'Direction Clinique / Administrateur',
+        senderName: connectedUserFullName,
+        receiverName: 'Direction Clinique / Comptabilité',
         notes: '',
         transferDate: new Date().toISOString().split('T')[0],
         attachmentUrl: '',
@@ -1612,10 +1720,20 @@ export default function ExpensesClient({
     setError('');
 
     try {
+      const origYmd = editingTx.transactionDate
+        ? new Date(editingTx.transactionDate).toISOString().split('T')[0]
+        : '';
+      const payloadToSend = {
+        ...editForm,
+        transactionDate:
+          editForm.transactionDate && editForm.transactionDate === origYmd
+            ? editingTx.transactionDate
+            : combineDateWithCurrentTime(editForm.transactionDate),
+      };
       const res = await fetch('/api/expenses', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(editForm),
+        body: JSON.stringify(payloadToSend),
       });
 
       const data = await res.json();
@@ -1814,12 +1932,17 @@ export default function ExpensesClient({
   };
 
   // =========================================================================
-  // SOUMISSION DÉPENSE CLINIQUE (PRÉLÈVEMENT PHARMACIE)
+  // SOUMISSION DÉPENSE CLINIQUE (PRÉLÈVEMENT PHARMACIE -> DÉBIT GRANDE CAISSE)
   // =========================================================================
   const handleSubmitRequisition = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!requisitionCart.length) {
       setError('Veuillez ajouter au moins un médicament à prélever.');
+      return;
+    }
+
+    if (requisitionDept === 'Autre' && !customRequisitionDept.trim()) {
+      setError('Veuillez préciser le nom du service destinataire personnalisé (« Autre »).');
       return;
     }
 
@@ -1833,7 +1956,8 @@ export default function ExpensesClient({
         body: JSON.stringify({
           action: 'CLINIC_MEDICINE_REQUISITION',
           department: requisitionDept,
-          requestedBy: requisitionRequester,
+          customDepartment: requisitionDept === 'Autre' ? customRequisitionDept.trim() : undefined,
+          requestedBy: connectedUserFullName,
           reason: requisitionReason,
           items: requisitionCart,
         }),
@@ -1856,9 +1980,10 @@ export default function ExpensesClient({
       setClinicRequisitions([data.requisition, ...clinicRequisitions]);
       setExpenses([data.cashTx, ...expenses]);
       setShowRequisitionModal(false);
+      setCustomRequisitionDept('');
       setLoading(false);
       setSuccessMsg(
-        `✓ Prélèvement pharmacie validé ! ${requisitionCart.length} médicaments déduits pour la clinique (${formatCurrency(data.requisition.totalCost)}).`
+        `✓ Prélèvement pharmacie validé et imputé à la Grande Caisse ! ${requisitionCart.length} médicament(s) déduit(s) (${formatCurrency(data.requisition.totalCost)}).`
       );
       setTimeout(() => setSuccessMsg(''), 6000);
 
@@ -1905,6 +2030,8 @@ export default function ExpensesClient({
               {isReceptionist
                 ? activeTab === 'transfers'
                   ? 'Versements vers Grande Caisse'
+                  : activeTab === 'weekend-consultations'
+                  ? 'Consultations Week-end'
                   : 'Dépenses Petite Caisse'
                 : isAccountant
                 ? 'Comptabilité & Grande Caisse'
@@ -1917,60 +2044,84 @@ export default function ExpensesClient({
               {isReceptionist
                 ? activeTab === 'transfers'
                   ? 'Versements Petite Caisse ➔ Grande Caisse'
-                  : 'Gestion Petite Caisse & Dépenses Accueil'
+                  : activeTab === 'weekend-consultations'
+                  ? 'Consultations Week-end (Accueil ➔ Grande Caisse Week-end)'
+                  : 'Dépenses Petite Caisse (Accueil)'
                 : isAccountant
                 ? 'Compte Comptable — Grande Caisse, Banque & Consultations Week-end'
                 : 'Gestion Solde, Dépenses, Paie & Trésorerie'}
             </span>
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            Pouvoir de décaissement de l'administration : Dépenses de fonctionnement, Fiches de paie du personnel &amp; Prélèvements pharmacie interne.
+            {isReceptionist
+              ? activeTab === 'transfers'
+                ? 'Espace dédié exclusivement aux versements de la Petite Caisse vers la Grande Caisse.'
+                : activeTab === 'weekend-consultations'
+                ? 'Suivi séparé des consultations encaissées le week-end et versement vers la Grande Caisse Week-end.'
+                : 'Gestion et suivi des menues dépenses autorisées sur la Petite Caisse Accueil.'
+              : "Pouvoir de décaissement et suivi financier : Dépenses, Transferts, Banque, Paie, Consultations Week-end & Dépenses Pharmacie Clinique."}
           </p>
         </div>
 
-        {/* Boutons d'action rapide */}
+        {/* Boutons d'action contextuels strictement séparés par onglet */}
         <div className="flex flex-wrap items-center gap-2">
-          {/* Versement / Mouvements inter-comptes */}
-          <button
-            type="button"
-            onClick={() => {
-              setError('');
-              setTransferType('PETITE_CAISSE_TO_GRANDE_CAISSE');
-              setShowTransferModal(true);
-            }}
-            className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-black text-white bg-emerald-600 hover:bg-emerald-700 shadow-sm shadow-emerald-600/20 transition-all cursor-pointer"
-          >
-            <Wallet className="w-4 h-4" />
-            <span>
-              {currentUser.role === 'RECEPTIONIST'
-                ? 'Nouveau Versement vers Grande Caisse'
-                : 'Mouvements & Transferts (Caisse / Coffre / Banque)'}
-            </span>
-          </button>
+          {/* Onglet Dépenses : uniquement Nouvelle Dépense / Sortie (aucun bouton de versement) */}
+          {activeTab === 'expenses' && (
+            <button
+              type="button"
+              onClick={() => {
+                setError('');
+                setShowExpenseModal(true);
+              }}
+              className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-black text-white bg-rose-600 hover:bg-rose-700 shadow-sm shadow-rose-600/20 transition-all cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Nouvelle Dépense / Sortie</span>
+            </button>
+          )}
 
-          <button
-            type="button"
-            onClick={() => {
-              setError('');
-              setShowExpenseModal(true);
-            }}
-            className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-black text-white bg-rose-600 hover:bg-rose-700 shadow-sm shadow-rose-600/20 transition-all cursor-pointer"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Nouvelle Dépense / Sortie</span>
-          </button>
+          {/* Onglet Versements / Transferts : uniquement l'action de versement / transfert */}
+          {activeTab === 'transfers' && (
+            <button
+              type="button"
+              onClick={() => {
+                setError('');
+                setTransferType('PETITE_CAISSE_TO_GRANDE_CAISSE');
+                setTransferForm((prev) => ({
+                  ...prev,
+                  senderName: connectedUserFullName,
+                  receiverName: 'Direction Clinique / Comptabilité',
+                  notes: 'Versement journalier des recettes de la Petite Caisse vers la Grande Caisse',
+                }));
+                setShowTransferModal(true);
+              }}
+              disabled={isReceptionist && soldeDisponiblePetiteCaisse <= 0}
+              className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-black text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm shadow-emerald-600/20 transition-all cursor-pointer"
+            >
+              <Wallet className="w-4 h-4" />
+              <span>
+                {isReceptionist
+                  ? 'Nouveau Versement vers Grande Caisse'
+                  : 'Nouveau Mouvement / Transfert'}
+              </span>
+            </button>
+          )}
 
-          <button
-            type="button"
-            onClick={() => {
-              setError('');
-              setShowRequisitionModal(true);
-            }}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 transition-colors cursor-pointer"
-          >
-            <Pill className="w-4 h-4 text-indigo-600" />
-            <span>Prélèvement Pharmacie (Clinique)</span>
-          </button>
+          {/* Onglet Dépenses Pharmacie Clinique (Admin & Comptable uniquement) */}
+          {activeTab === 'clinic-medicines' && !isReceptionist && (
+            <button
+              type="button"
+              onClick={() => {
+                setError('');
+                setRequisitionRequester(connectedUserFullName);
+                setShowRequisitionModal(true);
+              }}
+              className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-black text-white bg-indigo-600 hover:bg-indigo-700 shadow-sm transition-colors cursor-pointer"
+            >
+              <Pill className="w-4 h-4" />
+              <span>Prélèvement Pharmacie (Clinique)</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -2013,65 +2164,76 @@ export default function ExpensesClient({
         </div>
       </div>
 
-      {/* KPI Cards : Cloisonnement strict Accueil (Petite Caisse seule) vs Administrateur (Petite Caisse, Grande Caisse, Banque, Trésorerie) */}
+      {/* KPI Cards : Cloisonnement strict Accueil (Petite Caisse seule sur Dépenses/Versements) vs Admin/Comptable */}
       {currentUser.role === 'RECEPTIONIST' ? (
-        <div className="p-5 rounded-2xl bg-gradient-to-br from-white to-emerald-50/50 border-2 border-emerald-400 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-6">
-          {/* Solde Disponible en Petite Caisse (Accueil) */}
-          <div className="space-y-2">
-            <div className="flex items-center gap-2">
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-black bg-emerald-100 text-emerald-900 uppercase tracking-wider">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                <span>Petite Caisse (Accueil)</span>
-              </span>
-              <Wallet className="w-4 h-4 text-emerald-600" />
+        activeTab !== 'weekend-consultations' && (
+          <div className="p-5 rounded-2xl bg-gradient-to-br from-white to-emerald-50/50 border-2 border-emerald-400 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+            {/* Solde Disponible en Petite Caisse (Accueil) */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-black bg-emerald-100 text-emerald-900 uppercase tracking-wider">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                  <span>Petite Caisse (Accueil)</span>
+                </span>
+                <Wallet className="w-4 h-4 text-emerald-600" />
+              </div>
+
+              <div>
+                <div className="text-xs font-extrabold text-slate-500 uppercase tracking-wider">
+                  ★ Solde Disponible en Caisse
+                </div>
+                <div className={`text-3xl lg:text-4xl font-black tracking-tight ${soldeDisponiblePetiteCaisse > 0 ? 'text-emerald-800' : 'text-slate-700'}`}>
+                  {formatCurrency(soldeDisponiblePetiteCaisse)}
+                </div>
+                {soldeDisponiblePetiteCaisse === 0 && (
+                  <div className="text-[11px] font-bold text-emerald-800 bg-emerald-100/70 px-2.5 py-0.5 rounded-md inline-block mt-1">
+                    ✓ Caisse soldée (recettes intégralement versées à la Direction)
+                  </div>
+                )}
+              </div>
             </div>
 
-            <div>
-              <div className="text-xs font-extrabold text-slate-500 uppercase tracking-wider">
-                ★ Solde Disponible en Caisse
-              </div>
-              <div className={`text-3xl lg:text-4xl font-black tracking-tight ${soldeDisponiblePetiteCaisse > 0 ? 'text-emerald-800' : 'text-slate-700'}`}>
-                {formatCurrency(soldeDisponiblePetiteCaisse)}
-              </div>
-              {soldeDisponiblePetiteCaisse === 0 && (
-                <div className="text-[11px] font-bold text-emerald-800 bg-emerald-100/70 px-2.5 py-0.5 rounded-md inline-block mt-1">
-                  ✓ Caisse soldée (recettes intégralement versées à la Direction)
+            <div className="flex flex-col sm:flex-row sm:items-center gap-4 lg:gap-6">
+              <div className="text-xs space-y-1 text-slate-600 bg-white/80 p-3.5 rounded-xl border border-emerald-100 min-w-[280px]">
+                <div className="flex justify-between items-center gap-4">
+                  <span>Recettes encaissées (Consultations + Pharmacie) :</span>
+                  <strong className="text-emerald-700 font-bold">+{formatCurrency(recettesPetiteCaisse)}</strong>
                 </div>
+                <div className="flex justify-between items-center gap-4">
+                  <span>Menues dépenses autorisées :</span>
+                  <strong className="text-slate-700 font-bold">-{formatCurrency(depensesPetiteCaisseHorsTransfert)}</strong>
+                </div>
+                <div className="flex justify-between items-center gap-4">
+                  <span>Versements effectués :</span>
+                  <strong className="text-amber-700 font-bold">-{formatCurrency(totalTransfersAmount)}</strong>
+                </div>
+              </div>
+
+              {/* Bouton Versement affiché UNIQUEMENT dans l'onglet Versements vers Grande Caisse (jamais dans Dépenses Petite Caisse) */}
+              {activeTab === 'transfers' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setError('');
+                    setTransferType('PETITE_CAISSE_TO_GRANDE_CAISSE');
+                    setTransferForm((prev) => ({
+                      ...prev,
+                      senderName: connectedUserFullName,
+                      receiverName: 'Direction Clinique / Comptabilité',
+                      notes: 'Versement journalier des recettes de la Petite Caisse vers la Grande Caisse',
+                    }));
+                    setShowTransferModal(true);
+                  }}
+                  disabled={soldeDisponiblePetiteCaisse <= 0}
+                  className="py-3 px-5 rounded-xl text-xs font-black text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer shrink-0"
+                >
+                  <Wallet className="w-4 h-4" />
+                  <span>Effectuer un Versement vers la Grande Caisse</span>
+                </button>
               )}
             </div>
           </div>
-
-          <div className="flex flex-col sm:flex-row sm:items-center gap-4 lg:gap-6">
-            <div className="text-xs space-y-1 text-slate-600 bg-white/80 p-3.5 rounded-xl border border-emerald-100 min-w-[280px]">
-              <div className="flex justify-between items-center gap-4">
-                <span>Recettes encaissées (Consultations + Pharmacie) :</span>
-                <strong className="text-emerald-700 font-bold">+{formatCurrency(recettesPetiteCaisse)}</strong>
-              </div>
-              <div className="flex justify-between items-center gap-4">
-                <span>Menues dépenses autorisées :</span>
-                <strong className="text-slate-700 font-bold">-{formatCurrency(depensesPetiteCaisseHorsTransfert)}</strong>
-              </div>
-              <div className="flex justify-between items-center gap-4">
-                <span>Versements effectués :</span>
-                <strong className="text-amber-700 font-bold">-{formatCurrency(totalTransfersAmount)}</strong>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => {
-                setError('');
-                setTransferType('PETITE_CAISSE_TO_GRANDE_CAISSE');
-                setShowTransferModal(true);
-              }}
-              disabled={soldeDisponiblePetiteCaisse <= 0}
-              className="py-3 px-5 rounded-xl text-xs font-black text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer shrink-0"
-            >
-              <Wallet className="w-4 h-4" />
-              <span>Effectuer un Versement vers la Grande Caisse</span>
-            </button>
-          </div>
-        </div>
+        )
       ) : (
         /* VUE ADMINISTRATEUR : LES 3 SOLDES MAJEURS + TRÉSORERIE TOTALE */
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -2233,107 +2395,97 @@ export default function ExpensesClient({
         </div>
       )}
 
-      {/* Onglets Principaux Séparés */}
-      <div className="flex flex-wrap gap-1 rounded-xl bg-slate-200/80 p-1 text-xs font-bold w-fit">
-        <button
-          type="button"
-          onClick={() => setActiveTab('expenses')}
-          className={`px-3.5 py-2 rounded-lg transition-all flex items-center gap-2 cursor-pointer ${
-            activeTab === 'expenses'
-              ? 'bg-white text-slate-900 shadow-xs'
-              : 'text-slate-600 hover:text-slate-900'
-          }`}
-        >
-          <ArrowDownRight className="w-4 h-4 text-rose-600" />
-          <span>
-            {isReceptionist
-              ? `Dépenses Petite Caisse (${filteredExpenses.length})`
-              : `Dépenses (${filteredExpenses.length})`}
-          </span>
-        </button>
+      {/* Onglets Principaux Séparés (Masqués pour l'Accueil qui navigue directement via ses onglets dédiés du menu latéral) */}
+      {!isReceptionist && (
+        <div className="flex flex-wrap gap-1 rounded-xl bg-slate-200/80 p-1 text-xs font-bold w-fit">
+          <button
+            type="button"
+            onClick={() => setActiveTab('expenses')}
+            className={`px-3.5 py-2 rounded-lg transition-all flex items-center gap-2 cursor-pointer ${
+              activeTab === 'expenses'
+                ? 'bg-white text-slate-900 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <ArrowDownRight className="w-4 h-4 text-rose-600" />
+            <span>Dépenses ({filteredExpenses.length})</span>
+          </button>
 
-        <button
-          type="button"
-          onClick={() => setActiveTab('transfers')}
-          className={`px-3.5 py-2 rounded-lg transition-all flex items-center gap-2 cursor-pointer ${
-            activeTab === 'transfers'
-              ? 'bg-emerald-600 text-white shadow-xs'
-              : 'text-slate-600 hover:text-slate-900'
-          }`}
-        >
-          <ArrowRightLeft className="w-4 h-4" />
-          <span>
-            {isReceptionist
-              ? `Versements vers Grande Caisse (${transferTransactionsList.length})`
-              : `Transferts (${transferTransactionsList.length})`}
-          </span>
-        </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('transfers')}
+            className={`px-3.5 py-2 rounded-lg transition-all flex items-center gap-2 cursor-pointer ${
+              activeTab === 'transfers'
+                ? 'bg-emerald-600 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <ArrowRightLeft className="w-4 h-4" />
+            <span>Transferts ({transferTransactionsList.length})</span>
+          </button>
 
-        {!isReceptionist && (
-          <>
-            <button
-              type="button"
-              onClick={() => setActiveTab('bank')}
-              className={`px-3.5 py-2 rounded-lg transition-all flex items-center gap-2 cursor-pointer ${
-                activeTab === 'bank'
-                  ? 'bg-indigo-600 text-white shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Landmark className="w-4 h-4" />
-              <span>Mouvements Banque ({bankTransactionsList.length})</span>
-            </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('bank')}
+            className={`px-3.5 py-2 rounded-lg transition-all flex items-center gap-2 cursor-pointer ${
+              activeTab === 'bank'
+                ? 'bg-indigo-600 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Landmark className="w-4 h-4" />
+            <span>Mouvements Banque ({bankTransactionsList.length})</span>
+          </button>
 
-            <button
-              type="button"
-              onClick={() => setActiveTab('weekend-consultations')}
-              className={`px-3.5 py-2 rounded-lg transition-all flex items-center gap-2 cursor-pointer ${
+          <button
+            type="button"
+            onClick={() => setActiveTab('weekend-consultations')}
+            className={`px-3.5 py-2 rounded-lg transition-all flex items-center gap-2 cursor-pointer ${
+              activeTab === 'weekend-consultations'
+                ? 'bg-violet-600 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Calendar className="w-4 h-4" />
+            <span>Consultations Week-end</span>
+            <span
+              className={`px-1.5 py-0.5 rounded-full text-[10px] font-black ${
                 activeTab === 'weekend-consultations'
-                  ? 'bg-violet-600 text-white shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
+                  ? 'bg-white/20 text-white'
+                  : 'bg-violet-100 text-violet-800'
               }`}
             >
-              <Calendar className="w-4 h-4" />
-              <span>Consultations Week-end</span>
-              <span
-                className={`px-1.5 py-0.5 rounded-full text-[10px] font-black ${
-                  activeTab === 'weekend-consultations'
-                    ? 'bg-white/20 text-white'
-                    : 'bg-violet-100 text-violet-800'
-                }`}
-              >
-                {formatCurrency(soldeDisponibleWeekend)}
-              </span>
-            </button>
+              {formatCurrency(soldeDisponibleWeekend)}
+            </span>
+          </button>
 
-            <button
-              type="button"
-              onClick={() => setActiveTab('payroll')}
-              className={`px-3.5 py-2 rounded-lg transition-all flex items-center gap-2 cursor-pointer ${
-                activeTab === 'payroll'
-                  ? 'bg-purple-600 text-white shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Users className="w-4 h-4" />
-              <span>Fiches de Paie ({allEmployees.length})</span>
-            </button>
-          </>
-        )}
+          <button
+            type="button"
+            onClick={() => setActiveTab('payroll')}
+            className={`px-3.5 py-2 rounded-lg transition-all flex items-center gap-2 cursor-pointer ${
+              activeTab === 'payroll'
+                ? 'bg-purple-600 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Users className="w-4 h-4" />
+            <span>Fiches de Paie ({allEmployees.length})</span>
+          </button>
 
-        <button
-          type="button"
-          onClick={() => setActiveTab('clinic-medicines')}
-          className={`px-3.5 py-2 rounded-lg transition-all flex items-center gap-2 cursor-pointer ${
-            activeTab === 'clinic-medicines'
-              ? 'bg-slate-900 text-white shadow-xs'
-              : 'text-slate-600 hover:text-slate-900'
-          }`}
-        >
-          <Pill className="w-4 h-4" />
-          <span>Bons de Sortie Médicaments ({clinicRequisitions.length})</span>
-        </button>
-      </div>
+          <button
+            type="button"
+            onClick={() => setActiveTab('clinic-medicines')}
+            className={`px-3.5 py-2 rounded-lg transition-all flex items-center gap-2 cursor-pointer ${
+              activeTab === 'clinic-medicines'
+                ? 'bg-slate-900 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Pill className="w-4 h-4" />
+            <span>Dépenses Pharmacie Clinique ({clinicRequisitions.length})</span>
+          </button>
+        </div>
+      )}
 
       {/* ========================================================================= */}
       {/* ONGLET 1 : TOUTES LES DÉPENSES & DÉCAISSEMENTS                            */}
@@ -2842,6 +2994,12 @@ export default function ExpensesClient({
                 onClick={() => {
                   setError('');
                   setTransferType('PETITE_CAISSE_TO_GRANDE_CAISSE');
+                  setTransferForm((prev) => ({
+                    ...prev,
+                    senderName: connectedUserFullName,
+                    receiverName: 'Direction Clinique / Comptabilité',
+                    notes: 'Versement journalier des recettes de la Petite Caisse vers la Grande Caisse',
+                  }));
                   setShowTransferModal(true);
                 }}
                 disabled={soldeDisponiblePetiteCaisse <= 0}
@@ -2921,16 +3079,19 @@ export default function ExpensesClient({
                     const actors = parseTransactionActors(tx);
                     const isDepBq = tx.reference?.startsWith('DEP-BQ');
                     const isRetBq = tx.reference?.startsWith('RET-BQ');
+                    const isWeVers = tx.reference?.startsWith('VERS-WE');
                     const routeBadge = isDepBq
                       ? { label: 'Grande Caisse ➔ Banque', cls: 'bg-blue-50 text-blue-700 border-blue-200' }
                       : isRetBq
                       ? { label: 'Banque ➔ Grande Caisse', cls: 'bg-indigo-50 text-indigo-700 border-indigo-200' }
+                      : isWeVers
+                      ? { label: 'Caisse Week-end Accueil ➔ Grande Caisse Week-end', cls: 'bg-violet-50 text-violet-800 border-violet-200' }
                       : { label: 'Petite Caisse ➔ Grande Caisse', cls: 'bg-emerald-50 text-emerald-800 border-emerald-200' };
 
                     return (
                       <tr key={tx.id} className="hover:bg-slate-50/80 transition-colors">
                         <td className="py-3 px-4 whitespace-nowrap">
-                          <div className="font-bold text-slate-900">{formatDate(tx.transactionDate)}</div>
+                          <div className="font-bold text-slate-900">{formatDateTime(tx.transactionDate)}</div>
                           <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-700">
                             {tx.reference || 'VERS'}
                           </span>
@@ -3122,7 +3283,7 @@ export default function ExpensesClient({
                     return (
                       <tr key={tx.id} className="hover:bg-slate-50/80 transition-colors">
                         <td className="py-3 px-4 whitespace-nowrap">
-                          <div className="font-bold text-slate-900">{formatDate(tx.transactionDate)}</div>
+                          <div className="font-bold text-slate-900">{formatDateTime(tx.transactionDate)}</div>
                           <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700">
                             {tx.reference || 'BQ'}
                           </span>
@@ -3182,7 +3343,222 @@ export default function ExpensesClient({
       )}
 
       {/* ========================================================================= */}
-      {/* ONGLET 1d : CONSULTATIONS WEEK-END (BUDGET À PART & PAIEMENT MÉDECINS)    */}
+      {/* ONGLET 1d-ACCUEIL : CONSULTATIONS WEEK-END (COMPTE ACCUEIL -> VERSEMENT)  */}
+      {/* ========================================================================= */}
+      {activeTab === 'weekend-consultations' && isReceptionist && (
+        <div className="space-y-6">
+          <div className="p-5 rounded-2xl bg-gradient-to-r from-violet-900 via-purple-900 to-indigo-900 text-white shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-white/15 text-violet-200 uppercase tracking-wider">
+                <Calendar className="w-3.5 h-3.5" />
+                <span>Caisse Accueil • Consultations Week-end (Samedi &amp; Dimanche)</span>
+              </span>
+              <h2 className="text-xl font-black tracking-tight mt-1">
+                Recettes Consultations Week-end &amp; Versement vers Grande Caisse Week-end
+              </h2>
+              <p className="text-xs text-violet-200 max-w-2xl">
+                Toutes les consultations encaissées le week-end s&apos;accumulent ici séparément de la Petite Caisse normale. Effectuez un versement vers la Grande Caisse Week-end pour le règlement des médecins.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setError('');
+                setTransferType('WEEKEND_PETITE_TO_WEEKEND_GRANDE');
+                setTransferForm((prev) => ({
+                  ...prev,
+                  amount: soldeDisponiblePetiteCaisseWeekend > 0 ? String(soldeDisponiblePetiteCaisseWeekend) : '',
+                  senderName: connectedUserFullName,
+                  receiverName: 'Comptabilité / Grande Caisse Week-end',
+                  notes: 'Versement des recettes Consultations Week-end vers la Grande Caisse Week-end',
+                }));
+                setShowTransferModal(true);
+              }}
+              disabled={soldeDisponiblePetiteCaisseWeekend <= 0}
+              className="inline-flex items-center gap-2 px-4 py-3 rounded-xl text-xs font-black bg-emerald-500 hover:bg-emerald-600 text-white disabled:opacity-50 disabled:cursor-not-allowed shadow-sm transition-colors cursor-pointer shrink-0"
+            >
+              <Wallet className="w-4 h-4" />
+              <span>Effectuer un Versement Week-end ➔ Grande Caisse Week-end</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="p-5 rounded-2xl bg-gradient-to-br from-white to-violet-50 border-2 border-violet-400 shadow-xs space-y-1">
+              <div className="text-[11px] font-black text-violet-800 uppercase tracking-wider">
+                ★ Solde Disponible Caisse Week-end (Accueil)
+              </div>
+              <div className="text-3xl font-black text-violet-950 font-mono">
+                {formatCurrency(soldeDisponiblePetiteCaisseWeekend)}
+              </div>
+              <p className="text-[11px] text-slate-500">
+                Montant disponible à verser vers la Grande Caisse Week-end.
+              </p>
+            </div>
+
+            <div className="p-5 rounded-2xl bg-white border border-emerald-200 shadow-xs space-y-1">
+              <div className="text-[11px] font-black text-emerald-700 uppercase tracking-wider">
+                Total Consultations Week-end Encaissées
+              </div>
+              <div className="text-2xl font-black text-emerald-800 font-mono">
+                +{formatCurrency(totalPetiteWeekendIncome)}
+              </div>
+              <p className="text-[11px] text-slate-500">
+                {petiteWeekendIncomes.length} consultation(s) week-end encaissée(s).
+              </p>
+            </div>
+
+            <div className="p-5 rounded-2xl bg-white border border-amber-200 shadow-xs space-y-1">
+              <div className="text-[11px] font-black text-amber-700 uppercase tracking-wider">
+                Total Versé vers Grande Caisse Week-end
+              </div>
+              <div className="text-2xl font-black text-amber-800 font-mono">
+                -{formatCurrency(totalPetiteWeekendTransferred)}
+              </div>
+              <p className="text-[11px] text-slate-500">
+                {petiteWeekendTransfersOut.length} versement(s) week-end effectué(s).
+              </p>
+            </div>
+          </div>
+
+          {/* Tableau 1 : Recettes Consultations Week-end Accueil */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden p-5 space-y-3">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
+                <Stethoscope className="w-4 h-4 text-violet-600" />
+                <span>Entrées Consultations Week-end Encaissées ({petiteWeekendIncomes.length})</span>
+              </h3>
+              <span className="text-xs font-black text-emerald-700">
+                Total : +{formatCurrency(totalPetiteWeekendIncome)}
+              </span>
+            </div>
+
+            <div className="overflow-x-auto border border-slate-100 rounded-xl">
+              <table className="w-full text-xs text-left">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-bold text-[10px] tracking-wider">
+                    <th className="py-2.5 px-3">Date &amp; Heure</th>
+                    <th className="py-2.5 px-3">Référence</th>
+                    <th className="py-2.5 px-3">Description / Patient &amp; Médecin</th>
+                    <th className="py-2.5 px-3">Mode</th>
+                    <th className="py-2.5 px-3 text-right">Montant</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {petiteWeekendIncomes.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="py-8 text-center text-slate-400">
+                        Aucune consultation week-end encaissée pour le moment.
+                      </td>
+                    </tr>
+                  ) : (
+                    petiteWeekendIncomes.map((tx) => (
+                      <tr key={tx.id} className="hover:bg-slate-50/70 transition-colors">
+                        <td className="py-2.5 px-3 whitespace-nowrap font-bold text-slate-800">
+                          {formatDateTime(tx.transactionDate)}
+                        </td>
+                        <td className="py-2.5 px-3 font-mono font-bold text-violet-700">
+                          {tx.reference || 'CONS-WE'}
+                        </td>
+                        <td className="py-2.5 px-3 text-slate-700">{tx.description}</td>
+                        <td className="py-2.5 px-3">
+                          <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-semibold text-[10px]">
+                            {tx.paymentMethod}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-black font-mono text-emerald-700">
+                          +{formatCurrency(tx.amount)}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Tableau 2 : Versements Week-end vers Grande Caisse Week-end */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden p-5 space-y-3">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
+                <ArrowRightLeft className="w-4 h-4 text-emerald-600" />
+                <span>Historique des Versements Week-end vers Grande Caisse Week-end ({petiteWeekendTransfersOut.length})</span>
+              </h3>
+              <span className="text-xs font-black text-amber-700">
+                Total versé : {formatCurrency(totalPetiteWeekendTransferred)}
+              </span>
+            </div>
+
+            <div className="overflow-x-auto border border-slate-100 rounded-xl">
+              <table className="w-full text-xs text-left">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-bold text-[10px] tracking-wider">
+                    <th className="py-2.5 px-3">Date &amp; Heure</th>
+                    <th className="py-2.5 px-3">Référence</th>
+                    <th className="py-2.5 px-3">Détails &amp; Intervenants</th>
+                    <th className="py-2.5 px-3 text-right">Montant Versé</th>
+                    <th className="py-2.5 px-3 text-center">Bordereau</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {petiteWeekendTransfersOut.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="py-8 text-center text-slate-400">
+                        Aucun versement week-end effectué pour le moment.
+                      </td>
+                    </tr>
+                  ) : (
+                    petiteWeekendTransfersOut.map((tx) => {
+                      const actors = parseTransactionActors(tx);
+                      return (
+                        <tr key={tx.id} className="hover:bg-slate-50/70 transition-colors">
+                          <td className="py-2.5 px-3 whitespace-nowrap font-bold text-slate-800">
+                            {formatDateTime(tx.transactionDate)}
+                          </td>
+                          <td className="py-2.5 px-3 font-mono font-bold text-violet-700">
+                            {tx.reference || 'VERS-WE'}
+                          </td>
+                          <td className="py-2.5 px-3 text-slate-700">{tx.description}</td>
+                          <td className="py-2.5 px-3 text-right font-black font-mono text-amber-800">
+                            {formatCurrency(tx.amount)}
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setPrintedTransfer({
+                                  ref: tx.reference || 'VERS-WE',
+                                  amount: tx.amount,
+                                  senderName: actors.operator,
+                                  receiverName: 'Grande Caisse Week-end (Comptabilité)',
+                                  date: tx.transactionDate,
+                                  notes: tx.description,
+                                  attachmentUrl: tx.attachmentUrl,
+                                  attachmentName: tx.attachmentName,
+                                  title: 'Versement Caisse Week-end Accueil ➔ Grande Caisse Week-end',
+                                  sourceLabel: 'Caisse Consultations Week-end (Accueil)',
+                                  destLabel: 'Grande Caisse Consultations Week-end (Comptabilité)',
+                                })
+                              }
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold cursor-pointer"
+                            >
+                              <Printer className="w-3.5 h-3.5" />
+                              <span>Bordereau A4</span>
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* ONGLET 1d : CONSULTATIONS WEEK-END (GRANDE CAISSE WEEK-END COMPTABLE/ADMIN) */}
       {/* ========================================================================= */}
       {activeTab === 'weekend-consultations' && !isReceptionist && (
         <div className="space-y-6">
@@ -3191,17 +3567,39 @@ export default function ExpensesClient({
             <div className="space-y-1">
               <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-white/15 text-violet-200 uppercase tracking-wider">
                 <Calendar className="w-3.5 h-3.5" />
-                <span>Gestion à Part • Budget Consultations Week-end (Samedi &amp; Dimanche)</span>
+                <span>Gestion à Part • Grande Caisse Consultations Week-end (Samedi &amp; Dimanche)</span>
               </span>
               <h2 className="text-xl font-black tracking-tight mt-1">
-                Caisse Consultations Week-end &amp; Honoraires Médecins
+                Grande Caisse Consultations Week-end &amp; Honoraires Médecins
               </h2>
               <p className="text-xs text-violet-200 max-w-2xl">
-                Toutes les recettes de consultations effectuées le week-end sont isolées ici pour suivre le budget disponible et régler directement les honoraires des médecins de garde.
+                Toutes les recettes de consultations week-end versées par l&apos;Accueil (ou saisies ici) sont isolées dans ce budget pour régler directement les honoraires des médecins de garde.
               </p>
             </div>
 
             <div className="flex flex-wrap items-center gap-2 shrink-0">
+              {soldeDisponiblePetiteCaisseWeekend > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setError('');
+                    setTransferType('WEEKEND_PETITE_TO_WEEKEND_GRANDE');
+                    setTransferForm((prev) => ({
+                      ...prev,
+                      amount: String(soldeDisponiblePetiteCaisseWeekend),
+                      senderName: connectedUserFullName,
+                      receiverName: 'Grande Caisse Week-end (Comptabilité)',
+                      notes: 'Versement des recettes Consultations Week-end vers la Grande Caisse Week-end',
+                    }));
+                    setShowTransferModal(true);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-black bg-amber-400 hover:bg-amber-500 text-slate-950 shadow-sm transition-colors cursor-pointer"
+                >
+                  <ArrowRightLeft className="w-4 h-4" />
+                  <span>Encaisser Week-end Accueil ({formatCurrency(soldeDisponiblePetiteCaisseWeekend)})</span>
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={() => {
@@ -3233,29 +3631,41 @@ export default function ExpensesClient({
             </div>
           </div>
 
-          {/* 3 Cartes KPI du Budget Consultations Week-end */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {/* 4 Cartes KPI du Budget Consultations Week-end */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="p-5 rounded-2xl bg-gradient-to-br from-white to-violet-50 border-2 border-violet-400 shadow-xs space-y-1">
               <div className="text-[11px] font-black text-violet-800 uppercase tracking-wider">
-                ★ Budget Disponible Week-end
+                ★ Grande Caisse Week-end Disponible
               </div>
-              <div className="text-3xl font-black text-violet-950 font-mono">
+              <div className="text-2xl lg:text-3xl font-black text-violet-950 font-mono">
                 {formatCurrency(soldeDisponibleWeekend)}
               </div>
               <p className="text-[11px] text-slate-500">
-                Argent disponible pour les paiements honoraires médecins week-end.
+                Budget disponible pour régler les médecins week-end.
+              </p>
+            </div>
+
+            <div className="p-5 rounded-2xl bg-amber-50/70 border border-amber-300 shadow-xs space-y-1">
+              <div className="text-[11px] font-black text-amber-800 uppercase tracking-wider">
+                En attente à l&apos;Accueil (Week-end)
+              </div>
+              <div className="text-2xl font-black text-amber-900 font-mono">
+                {formatCurrency(soldeDisponiblePetiteCaisseWeekend)}
+              </div>
+              <p className="text-[11px] text-amber-800/80">
+                Encaissé à l&apos;accueil, en attente de versement.
               </p>
             </div>
 
             <div className="p-5 rounded-2xl bg-white border border-emerald-200 shadow-xs space-y-1">
               <div className="text-[11px] font-black text-emerald-700 uppercase tracking-wider">
-                Total Entrées Consultations Week-end
+                Total Entrées Grande Caisse Week-end
               </div>
               <div className="text-2xl font-black text-emerald-800 font-mono">
                 +{formatCurrency(totalWeekendIncome)}
               </div>
               <p className="text-[11px] text-slate-500">
-                {allWeekendEntries.length} consultation(s) Samedi &amp; Dimanche comptabilisée(s).
+                {allWeekendEntries.length} entrée(s) &amp; versement(s) week-end.
               </p>
             </div>
 
@@ -3349,7 +3759,7 @@ export default function ExpensesClient({
                     filteredWeekendEntries.map((entry) => (
                       <tr key={entry.id} className="hover:bg-slate-50/70 transition-colors">
                         <td className="py-2.5 px-3 whitespace-nowrap">
-                          <div className="font-bold text-slate-900">{formatDate(entry.date)}</div>
+                          <div className="font-bold text-slate-900">{formatDateTime(entry.date)}</div>
                           <span className="inline-block px-1.5 py-0.5 rounded bg-violet-100 text-violet-800 text-[10px] font-bold">
                             {entry.dayLabel}
                           </span>
@@ -3411,7 +3821,7 @@ export default function ExpensesClient({
                       return (
                         <tr key={pay.id} className="hover:bg-slate-50/70 transition-colors">
                           <td className="py-2.5 px-3 whitespace-nowrap">
-                            <div className="font-bold text-slate-900">{formatDate(pay.transactionDate)}</div>
+                            <div className="font-bold text-slate-900">{formatDateTime(pay.transactionDate)}</div>
                             <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-50 text-rose-700">
                               {pay.reference || 'PAY-MED-WE'}
                             </span>
@@ -3719,19 +4129,42 @@ export default function ExpensesClient({
       )}
 
       {/* ========================================================================= */}
-      {/* ONGLET 3 : DÉPENSE CLINIQUE : PRÉLÈVEMENT MÉDICAMENTS PHARMACIE          */}
+      {/* ONGLET 3 : DÉPENSES PHARMACIE CLINIQUE (COMPTABLE & ADMIN — GRANDE CAISSE)*/}
       {/* ========================================================================= */}
-      {activeTab === 'clinic-medicines' && (
+      {activeTab === 'clinic-medicines' && !isReceptionist && (
         <div className="space-y-6">
+          {/* Synthèse Dépenses Pharmacie Clinique imputées sur Grande Caisse */}
+          <div className="p-5 rounded-2xl bg-gradient-to-r from-indigo-950 via-indigo-900 to-slate-900 text-white shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-indigo-500/30 text-indigo-200 uppercase tracking-wider border border-indigo-400/30">
+                <Pill className="w-3.5 h-3.5" />
+                <span>Suivi Comptable • Débit Grande Caisse</span>
+              </span>
+              <h3 className="text-lg font-black">
+                Dépenses de la Clinique en Médicaments Pharmacie
+              </h3>
+              <p className="text-xs text-indigo-200">
+                Chaque prélèvement interne déduit automatiquement les unités du stock pharmacie et débite la <strong>Grande Caisse</strong>.
+              </p>
+            </div>
+            <div className="bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-right shrink-0">
+              <div className="text-[10px] font-bold text-indigo-200 uppercase">Total Dépenses Pharmacie Clinique</div>
+              <div className="text-2xl font-black font-mono text-amber-300">
+                {formatCurrency(totalClinicRequisitions)}
+              </div>
+              <div className="text-[10px] text-indigo-200">{clinicRequisitions.length} bon(s) de sortie</div>
+            </div>
+          </div>
+
           <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5 space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
               <div>
                 <h3 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
                   <Pill className="w-4 h-4 text-indigo-600" />
-                  <span>Prélèvements Pharmacie pour l'Usage Clinique ({clinicRequisitions.length})</span>
+                  <span>Prélèvements Pharmacie pour l&apos;Usage Clinique ({clinicRequisitions.length})</span>
                 </h3>
                 <p className="text-[11px] text-slate-500 mt-0.5">
-                  Consommation interne : les médicaments prélevés sont automatiquement décomptés du stock de la pharmacie et imputés aux dépenses cliniques.
+                  Consommation interne : les médicaments prélevés sont décomptés du stock pharmacie et imputés en sortie de Grande Caisse.
                 </p>
               </div>
 
@@ -3739,6 +4172,7 @@ export default function ExpensesClient({
                 type="button"
                 onClick={() => {
                   setError('');
+                  setRequisitionRequester(connectedUserFullName);
                   setShowRequisitionModal(true);
                 }}
                 className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-black text-white bg-indigo-600 hover:bg-indigo-700 shadow-sm transition-colors cursor-pointer"
@@ -4439,6 +4873,8 @@ export default function ExpensesClient({
         const sourceAvailable =
           transferType === 'PETITE_CAISSE_TO_GRANDE_CAISSE'
             ? soldeDisponiblePetiteCaisse
+            : transferType === 'WEEKEND_PETITE_TO_WEEKEND_GRANDE'
+            ? soldeDisponiblePetiteCaisseWeekend
             : transferType === 'GRANDE_CAISSE_TO_BANQUE'
             ? soldeDisponibleGrandeCaisse
             : soldeDisponibleBanque;
@@ -4446,6 +4882,8 @@ export default function ExpensesClient({
         const destCurrent =
           transferType === 'PETITE_CAISSE_TO_GRANDE_CAISSE'
             ? soldeDisponibleGrandeCaisse
+            : transferType === 'WEEKEND_PETITE_TO_WEEKEND_GRANDE'
+            ? soldeDisponibleWeekend
             : transferType === 'GRANDE_CAISSE_TO_BANQUE'
             ? soldeDisponibleBanque
             : soldeDisponibleGrandeCaisse;
@@ -4453,6 +4891,8 @@ export default function ExpensesClient({
         const sourceLabel =
           transferType === 'PETITE_CAISSE_TO_GRANDE_CAISSE'
             ? 'Petite Caisse (Accueil)'
+            : transferType === 'WEEKEND_PETITE_TO_WEEKEND_GRANDE'
+            ? 'Caisse Week-end (Accueil)'
             : transferType === 'GRANDE_CAISSE_TO_BANQUE'
             ? 'Grande Caisse (Coffre Direction)'
             : 'Banque';
@@ -4460,9 +4900,16 @@ export default function ExpensesClient({
         const destLabel =
           transferType === 'PETITE_CAISSE_TO_GRANDE_CAISSE'
             ? 'Grande Caisse (Coffre Direction)'
+            : transferType === 'WEEKEND_PETITE_TO_WEEKEND_GRANDE'
+            ? 'Grande Caisse Week-end'
             : transferType === 'GRANDE_CAISSE_TO_BANQUE'
             ? 'Banque'
             : 'Grande Caisse (Coffre Direction)';
+
+        const lockedSenderDisplay =
+          transferType === 'BANQUE_TO_GRANDE_CAISSE'
+            ? bankSettings.bankName || 'Banque'
+            : connectedUserFullName;
 
         const amt = parseFloat(transferForm.amount) || 0;
         const newSource = sourceAvailable - amt;
@@ -4481,15 +4928,19 @@ export default function ExpensesClient({
                   <h3 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
                     <Wallet className="w-5 h-5 text-emerald-600" />
                     <span>
-                      {isReceptionist
+                      {transferType === 'WEEKEND_PETITE_TO_WEEKEND_GRANDE'
+                        ? 'Versement : Caisse Week-end ➔ Grande Caisse Week-end'
+                        : isReceptionist
                         ? 'Versement : Petite Caisse ➔ Grande Caisse'
                         : 'Mouvements & Transferts de Trésorerie'}
                     </span>
                   </h3>
                   <p className="text-[11px] text-slate-500 mt-0.5">
-                    {isReceptionist
-                      ? "Transfert certifié des recettes collectées par l'Accueil vers le coffre Administrateur"
-                      : 'Gestion des flux entre Petite Caisse, Coffre Direction (Grande Caisse) et Compte Bancaire'}
+                    {transferType === 'WEEKEND_PETITE_TO_WEEKEND_GRANDE'
+                      ? "Transfert certifié des recettes de consultations week-end vers la Grande Caisse Week-end"
+                      : isReceptionist
+                      ? "Transfert certifié des recettes collectées par l'Accueil vers la Grande Caisse"
+                      : 'Gestion des flux entre Petite Caisse, Grande Caisse, Caisse Week-end et Compte Bancaire'}
                   </p>
                 </div>
                 <button
@@ -4501,8 +4952,8 @@ export default function ExpensesClient({
                 </button>
               </div>
 
-              {/* Sélecteur de type de transfert (Uniquement pour Administrateur) */}
-              {!isReceptionist && (
+              {/* Sélecteur de type de transfert (Uniquement pour Administrateur / Comptable hors versement week-end dédié) */}
+              {!isReceptionist && transferType !== 'WEEKEND_PETITE_TO_WEEKEND_GRANDE' && (
                 <div className="space-y-1.5">
                   <label className="text-[11px] font-extrabold text-slate-600 uppercase tracking-wider block">
                     Type de Mouvement de Trésorerie :
@@ -4514,8 +4965,8 @@ export default function ExpensesClient({
                         setTransferType('PETITE_CAISSE_TO_GRANDE_CAISSE');
                         setTransferForm((prev) => ({
                           ...prev,
-                          senderName: 'Accueil & Caisse (Caissière)',
-                          receiverName: 'Direction Clinique / Administrateur',
+                          senderName: connectedUserFullName,
+                          receiverName: 'Direction Clinique / Comptabilité',
                           notes: 'Versement journalier des recettes de la Petite Caisse vers la Grande Caisse',
                         }));
                       }}
@@ -4704,14 +5155,14 @@ export default function ExpensesClient({
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block font-bold text-slate-700 mb-1">
-                      Donneur d'ordre / Émetteur *
+                      Donneur d&apos;ordre / Émetteur * <span className="text-[10px] text-emerald-700 font-semibold">(Figé)</span>
                     </label>
                     <input
                       type="text"
                       required
-                      value={transferForm.senderName}
-                      onChange={(e) => setTransferForm({ ...transferForm, senderName: e.target.value })}
-                      className="w-full px-3 py-2 rounded-lg border border-slate-200 font-semibold"
+                      readOnly
+                      value={lockedSenderDisplay}
+                      className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-100 text-slate-800 font-bold cursor-not-allowed"
                     />
                   </div>
 
@@ -4886,9 +5337,10 @@ export default function ExpensesClient({
                     className="w-full px-3 py-2 rounded-lg border border-slate-300 font-bold bg-white"
                   >
                     <option value="PETITE_CAISSE">Petite Caisse (Accueil)</option>
+                    <option value="PETITE_CAISSE_WEEKEND">Caisse Week-end (Accueil)</option>
                     <option value="GRANDE_CAISSE">Grande Caisse (Coffre Direction)</option>
                     <option value="BANQUE">Banque</option>
-                    <option value="CONSULTATION_WEEKEND">Consultations Week-end</option>
+                    <option value="CONSULTATION_WEEKEND">Grande Caisse Consultations Week-end</option>
                   </select>
                 </div>
 
@@ -5895,23 +6347,39 @@ export default function ExpensesClient({
                     <option value="Hospitalisation">Chambres d’Hospitalisation</option>
                     <option value="Bloc & Pansements">Salle de Pansement &amp; Soins</option>
                     <option value="Trousse de Secours">Trousse de Premiers Secours</option>
+                    <option value="Autre">Autre (Service personnalisé...)</option>
                   </select>
                 </div>
 
                 <div>
                   <label className="block font-bold text-slate-700 mb-1">
-                    Demandé / Réceptionné par
+                    Demandé / Réceptionné par <span className="text-[10px] text-indigo-700 font-semibold">(Figé)</span>
                   </label>
                   <input
                     type="text"
-                    value={requisitionRequester}
-                    onChange={(e) => setRequisitionRequester(e.target.value)}
+                    value={connectedUserFullName}
+                    readOnly
                     required
-                    placeholder="Ex: Sarah Rasoa (Infirmière)"
-                    className="w-full px-3 py-2 rounded-lg border border-slate-200"
+                    className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-100 text-slate-800 font-bold cursor-not-allowed"
                   />
                 </div>
               </div>
+
+              {requisitionDept === 'Autre' && (
+                <div className="p-3 rounded-xl bg-amber-50 border border-amber-200">
+                  <label className="block font-bold text-amber-900 mb-1">
+                    Précisez le service destinataire personnalisé *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={customRequisitionDept}
+                    onChange={(e) => setCustomRequisitionDept(e.target.value)}
+                    placeholder="Ex: Laboratoire, Maternité, Pédiatrie, Chirurgie..."
+                    className="w-full px-3 py-2 rounded-lg border border-amber-300 bg-white font-semibold text-slate-900 focus:outline-hidden focus:ring-2 focus:ring-amber-400"
+                  />
+                </div>
+              )}
 
               <div>
                 <label className="block font-bold text-slate-700 mb-1">
@@ -6017,7 +6485,7 @@ export default function ExpensesClient({
                   <div className="text-xl font-black text-indigo-900">{formatCurrency(requisitionTotal)}</div>
                 </div>
                 <span className="text-[11px] text-indigo-700 font-semibold">
-                  Déduit des stocks de la pharmacie &amp; imputé aux dépenses
+                  Déduit du stock pharmacie &amp; débité sur la Grande Caisse
                 </span>
               </div>
 

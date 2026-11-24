@@ -1,7 +1,8 @@
 /**
- * Utilitaire d'impression pour imprimante de ticket thermique (80mm)
+ * Utilitaire d'impression pour imprimante de ticket thermique pharmacie (80mm)
  * Compatible Epson TM-T20, TM-T88, Star Micronics, Xprinter, etc.
- * Utilise les données dynamiques de la clinique stockées en base de données.
+ * Haute netteté monochrome : 100% noir pur (#000000) sur fond blanc (#ffffff),
+ * police sans-serif grasse anti-flou, zéro nuance de gris, code-barres crispEdges.
  */
 
 export interface ThermalReceiptItem {
@@ -43,7 +44,7 @@ export interface ThermalReceiptData {
 export function formatPaymentMethod(method: string): string {
   switch (method) {
     case 'CASH':
-      return 'Espèces (Cash)';
+      return 'Especes (Cash)';
     case 'MOBILE_MONEY':
       return 'Mobile Money';
     case 'CREDIT_CARD':
@@ -51,7 +52,7 @@ export function formatPaymentMethod(method: string): string {
     case 'BANK_TRANSFER':
       return 'Virement Bancaire';
     default:
-      return method || 'Espèces';
+      return method || 'Especes';
   }
 }
 
@@ -59,7 +60,9 @@ export function formatReceiptMoney(amount: number | null | undefined, currency: 
   if (amount === null || amount === undefined || isNaN(Number(amount))) return `0 ${currency}`;
   const formatted = new Intl.NumberFormat('fr-FR', {
     maximumFractionDigits: 0,
-  }).format(Number(amount));
+  })
+    .format(Number(amount))
+    .replace(/[\u00A0\u202F]/g, ' ');
   return `${formatted} ${currency}`;
 }
 
@@ -67,28 +70,25 @@ export function formatReceiptDateTime(date: string | Date | null | undefined): s
   if (!date) return '-';
   const d = typeof date === 'string' ? new Date(date) : date;
   if (isNaN(d.getTime())) return '-';
-  return new Intl.DateTimeFormat('fr-FR', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  }).format(d);
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const yyyy = d.getFullYear();
+  const hh = String(d.getHours()).padStart(2, '0');
+  const min = String(d.getMinutes()).padStart(2, '0');
+  return `${dd}/${mm}/${yyyy} ${hh}:${min}`;
 }
 
 /**
- * Génère le code HTML pur optimisé pour imprimante de ticket thermique 80mm
+ * Génère le code HTML haute netteté optimisé pour imprimante thermique 80mm (largeur utile 72mm)
  */
 export function generateThermalReceiptHtml(data: ThermalReceiptData): string {
   const currency = data.clinic?.currency || 'Ar';
   const clinicName = data.clinic?.name || 'CLINIQUE BETESDA';
   const clinicSlogan = data.clinic?.slogan || 'Soins & Pharmacie';
-  const clinicAddress = data.clinic?.address || 'Lot IVG 35 Rue Pasteur, Antananarivo, Madagascar';
+  const clinicAddress = data.clinic?.address || 'Lot IVG 35 Rue Pasteur, Antananarivo';
   const clinicPhone = data.clinic?.phone || '034 51 365 45 / 034 53 689 59';
-  const clinicTax = data.clinic?.taxId || 'NIF: 3 005 710 430 - N° Stat: 86201 11 2021 0 08027';
+  const clinicTax = data.clinic?.taxId || 'NIF: 3 005 710 430 - Stat: 86201 11 2021 0 08027';
   const clinicEmail = data.clinic?.email || 'contact@betesda.com';
-  const clinicWebsite = data.clinic?.website || 'https://cliniquebetesda.mg';
 
   const cashier = data.cashierName || 'Caisse Pharmacie';
   const customer = data.customerName || 'Client de passage';
@@ -103,7 +103,6 @@ export function generateThermalReceiptHtml(data: ThermalReceiptData): string {
 
   const totalQuantity = (data.items || []).reduce((acc, item) => acc + item.quantity, 0);
 
-  // Lignes d'articles
   const itemsHtml = (data.items || [])
     .map((it) => {
       const unit = formatReceiptMoney(it.unitPrice, currency);
@@ -132,126 +131,153 @@ export function generateThermalReceiptHtml(data: ThermalReceiptData): string {
     }
     *, *:before, *:after {
       box-sizing: border-box;
-      -webkit-print-color-adjust: exact;
-      print-color-adjust: exact;
+      margin: 0;
+      padding: 0;
+      color: #000000 !important;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      -webkit-font-smoothing: none;
+      text-rendering: geometricPrecision;
     }
     html, body {
       margin: 0;
       padding: 0;
-      background: #fff;
-      color: #000;
-      font-family: 'Courier New', Courier, Consolas, Monaco, monospace;
-      font-size: 11.5px;
+      background: #ffffff;
+      color: #000000;
+      font-family: 'Arial', 'Helvetica Neue', 'Liberation Sans', 'DejaVu Sans', sans-serif;
+      font-size: 12px;
       line-height: 1.35;
-      font-weight: 500;
+      font-weight: 700;
       width: 80mm;
       max-width: 80mm;
     }
     .ticket-container {
       width: 72mm;
+      max-width: 72mm;
       margin: 0 auto;
-      padding: 5mm 1.5mm 12mm 1.5mm;
+      padding: 2.5mm 1mm 10mm 1mm;
+      background: #ffffff;
     }
     .text-center { text-align: center; }
     .text-right { text-align: right; }
     .text-left { text-align: left; }
-    .bold { font-weight: bold; }
+    .bold { font-weight: 900; }
     .uppercase { text-transform: uppercase; }
 
     /* Header Clinique */
     .clinic-title {
-      font-size: 14.5px;
+      font-size: 16px;
       font-weight: 900;
-      letter-spacing: 0.3px;
-      line-height: 1.25;
+      letter-spacing: 0.4px;
+      line-height: 1.2;
       margin-bottom: 2px;
     }
     .clinic-slogan {
-      font-size: 10px;
-      font-style: italic;
-      margin-bottom: 4px;
+      font-size: 10.5px;
+      font-weight: 700;
+      margin-bottom: 3px;
     }
     .clinic-meta {
-      font-size: 10px;
+      font-size: 10.5px;
+      font-weight: 700;
       line-height: 1.3;
     }
     .clinic-tax {
-      font-size: 9.5px;
+      font-size: 10px;
       margin-top: 2px;
-      font-weight: bold;
+      font-weight: 800;
     }
 
-    /* Lignes de séparation thermiques */
+    /* Séparateurs nets 100% noir */
     .sep-solid {
-      border-top: 1px solid #000;
-      margin: 5px 0;
-    }
-    .sep-double {
-      border-top: 3px double #000;
+      border-top: 2px solid #000000;
       margin: 6px 0;
     }
     .sep-dashed {
-      border-top: 1px dashed #000;
+      border-top: 1.5px dashed #000000;
       margin: 5px 0;
     }
 
     /* En-tête Ticket */
     .ticket-badge {
-      display: inline-block;
-      border: 1px solid #000;
-      padding: 2px 6px;
-      font-size: 11px;
-      font-weight: bold;
+      display: block;
+      width: 100%;
+      background: #000000;
+      color: #ffffff !important;
+      border: 2px solid #000000;
+      padding: 4px 6px;
+      font-size: 12.5px;
+      font-weight: 900;
       letter-spacing: 0.5px;
-      margin: 3px 0;
+      text-align: center;
+      margin: 4px 0 3px 0;
     }
+    .ticket-sub-banner {
+      border: 1.5px solid #000000;
+      padding: 3px 4px;
+      font-size: 10px;
+      font-weight: 900;
+      text-align: center;
+      margin-bottom: 5px;
+      text-transform: uppercase;
+    }
+
     .info-table {
       width: 100%;
-      font-size: 10.5px;
+      font-size: 11.5px;
       border-collapse: collapse;
       margin: 3px 0;
     }
     .info-table td {
-      padding: 1px 0;
+      padding: 1.5px 0;
       vertical-align: top;
     }
     .info-label {
-      width: 32%;
-      color: #000;
+      width: 34%;
+      font-weight: 700;
     }
     .info-val {
-      width: 68%;
-      font-weight: 600;
+      width: 66%;
+      font-weight: 900;
     }
 
     /* Articles */
     .items-header {
       display: flex;
       justify-content: space-between;
-      font-size: 10px;
-      font-weight: bold;
+      font-size: 11px;
+      font-weight: 900;
       padding: 2px 0;
+      text-transform: uppercase;
     }
     .item-row {
-      margin-bottom: 5px;
+      margin-bottom: 6px;
+      padding-bottom: 4px;
+      border-bottom: 1px dashed #000000;
       page-break-inside: avoid;
     }
+    .item-row:last-child {
+      border-bottom: none;
+      margin-bottom: 2px;
+      padding-bottom: 0;
+    }
     .item-name {
-      font-weight: bold;
-      font-size: 11px;
+      font-weight: 900;
+      font-size: 12px;
       word-break: break-word;
+      margin-bottom: 1px;
     }
     .item-details {
       display: flex;
       justify-content: space-between;
-      font-size: 10.5px;
-      padding-left: 6px;
+      font-size: 11.5px;
+      padding-left: 4px;
     }
     .item-qty-pu {
-      color: #000;
+      font-weight: 700;
     }
     .item-total {
-      font-weight: bold;
+      font-weight: 900;
     }
 
     /* Totaux financiers */
@@ -259,19 +285,22 @@ export function generateThermalReceiptHtml(data: ThermalReceiptData): string {
       width: 100%;
       border-collapse: collapse;
       margin: 4px 0;
+      font-size: 11.5px;
     }
     .totals-table td {
-      padding: 1.5px 0;
+      padding: 2px 0;
+      font-weight: 800;
     }
     .net-box {
-      border: 2px solid #000;
-      padding: 4px 6px;
-      margin: 4px 0;
+      border: 2.5px solid #000000;
+      padding: 6px 7px;
+      margin: 6px 0;
       display: flex;
       justify-content: space-between;
       align-items: center;
-      font-size: 13px;
+      font-size: 15px;
       font-weight: 900;
+      background: #ffffff;
     }
 
     /* Pied de ticket */
@@ -280,57 +309,53 @@ export function generateThermalReceiptHtml(data: ThermalReceiptData): string {
       text-align: center;
     }
     .barcode-svg {
-      width: 190px;
-      height: 38px;
+      width: 210px;
+      height: 42px;
       margin: 0 auto;
       display: block;
     }
     .barcode-text {
-      font-size: 10px;
-      letter-spacing: 2px;
-      font-weight: bold;
-      margin-top: 2px;
+      font-size: 11.5px;
+      letter-spacing: 1.5px;
+      font-weight: 900;
+      margin-top: 3px;
     }
     .disclaimer {
-      font-size: 9px;
+      font-size: 10px;
+      font-weight: 700;
       line-height: 1.35;
       margin-top: 4px;
     }
     .thanks {
-      font-size: 11px;
-      font-weight: bold;
-      letter-spacing: 0.5px;
+      font-size: 12.5px;
+      font-weight: 900;
+      letter-spacing: 0.4px;
       margin: 6px 0 2px 0;
     }
     .cut-guide {
       text-align: center;
-      font-size: 8px;
-      color: #333;
+      font-size: 10px;
+      font-weight: 800;
       margin-top: 10px;
     }
   </style>
 </head>
 <body>
   <div class="ticket-container">
-    <!-- CLINIC HEADER (DYNAMIC) -->
     <div class="text-center">
       <div class="clinic-title uppercase">${escapeHtml(clinicName)}</div>
       ${clinicSlogan ? `<div class="clinic-slogan">${escapeHtml(clinicSlogan)}</div>` : ''}
       ${clinicAddress ? `<div class="clinic-meta">${escapeHtml(clinicAddress)}</div>` : ''}
-      ${clinicPhone ? `<div class="clinic-meta">Tél : ${escapeHtml(clinicPhone)}</div>` : ''}
+      ${clinicPhone ? `<div class="clinic-meta">Tel : ${escapeHtml(clinicPhone)}</div>` : ''}
       ${clinicEmail ? `<div class="clinic-meta">${escapeHtml(clinicEmail)}</div>` : ''}
       ${clinicTax ? `<div class="clinic-tax">${escapeHtml(clinicTax)}</div>` : ''}
-      ${clinicWebsite ? `<div class="clinic-meta">${escapeHtml(clinicWebsite)}</div>` : ''}
     </div>
 
-    <div class="sep-double"></div>
+    <div class="sep-solid"></div>
 
-    <!-- TICKET METADATA -->
-    <div class="text-center">
-      <div class="ticket-badge">TICKET CAISSE PHARMACIE</div>
-      <div style="font-size: 8px; font-weight: bold; color: #166534; margin-top: 2px;">
-        ✓ PAYÉ À L'ACCUEIL — À PRÉSENTER À LA PHARMACIE POUR RETRAIT
-      </div>
+    <div class="ticket-badge">TICKET CAISSE PHARMACIE</div>
+    <div class="ticket-sub-banner">
+      PAYE A L'ACCUEIL - A PRESENTER A LA PHARMACIE
     </div>
 
     <table class="info-table">
@@ -356,36 +381,34 @@ export function generateThermalReceiptHtml(data: ThermalReceiptData): string {
         <td class="info-val">: ${escapeHtml(data.customerPhone)}</td>
       </tr>` : ''}
       <tr>
-        <td class="info-label">Règlement</td>
+        <td class="info-label">Reglement</td>
         <td class="info-val">: ${escapeHtml(paymentStr)}</td>
       </tr>
       ${data.paymentReference ? `
       <tr>
-        <td class="info-label">Réf. Trans.</td>
+        <td class="info-label">Ref. Trans.</td>
         <td class="info-val">: ${escapeHtml(data.paymentReference)}</td>
-      </tr>` : (data.paymentMethod !== 'CASH' ? `
+      </tr>` : data.paymentMethod !== 'CASH' ? `
       <tr>
-        <td class="info-label">Réf. Trans.</td>
-        <td class="info-val" style="border-bottom: 1px dotted #333; min-width: 110px;">: &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
-      </tr>` : '')}
+        <td class="info-label">Ref. Trans.</td>
+        <td class="info-val" style="border-bottom: 1.5px solid #000; min-width: 110px;">: &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
+      </tr>` : ''}
     </table>
 
-    <div class="sep-dashed"></div>
+    <div class="sep-solid"></div>
 
-    <!-- ITEMS BREAKDOWN -->
     <div class="items-header">
-      <span>DÉSIGNATION / QTÉ x P.U</span>
+      <span>DESIGNATION / QTE x P.U</span>
       <span>TOTAL</span>
     </div>
-    <div class="sep-solid"></div>
+    <div class="sep-solid" style="margin-top: 3px;"></div>
 
     <div class="items-list">
       ${itemsHtml}
     </div>
 
-    <div class="sep-dashed"></div>
+    <div class="sep-solid"></div>
 
-    <!-- TOTALS -->
     <table class="totals-table">
       <tr>
         <td>Nombre d'articles :</td>
@@ -397,27 +420,27 @@ export function generateThermalReceiptHtml(data: ThermalReceiptData): string {
       </tr>
       ${discount > 0 ? `
       <tr>
-        <td>Remise accordée :</td>
+        <td>Remise accordee :</td>
         <td class="text-right bold">- ${formatReceiptMoney(discount, currency)}</td>
       </tr>` : ''}
     </table>
 
     ${data.isFreeGift || total === 0 ? `
-    <div class="net-box" style="display:block; text-align:center; padding: 6px; border: 2px dashed #000; background: #fafafa;">
-      <div style="font-size: 13px; font-weight: 900; letter-spacing: 0.5px;">★ DISPENSATION GRATUITE (0 Ar) ★</div>
-      <div style="font-size: 9.5px; font-weight: bold; margin-top: 2px; text-transform: uppercase;">Prise en charge 100% Clinique Betesda</div>
+    <div class="net-box" style="display:block; text-align:center; padding: 6px;">
+      <div style="font-size: 13.5px; font-weight: 900;">DISPENSATION GRATUITE (0 Ar)</div>
+      <div style="font-size: 10.5px; font-weight: 800; margin-top: 2px; text-transform: uppercase;">Prise en charge 100% Clinique Betesda</div>
     </div>
     ` : `
     <div class="net-box">
-      <span>NET À PAYER :</span>
+      <span>NET A PAYER :</span>
       <span>${formatReceiptMoney(total, currency)}</span>
     </div>
     `}
 
     ${cashTendered !== null && cashTendered > 0 ? `
-    <table class="totals-table" style="font-size: 10.5px;">
+    <table class="totals-table">
       <tr>
-        <td>Montant versé :</td>
+        <td>Montant verse :</td>
         <td class="text-right">${formatReceiptMoney(cashTendered, currency)}</td>
       </tr>
       <tr>
@@ -429,27 +452,25 @@ export function generateThermalReceiptHtml(data: ThermalReceiptData): string {
 
     <div class="sep-dashed"></div>
 
-    <!-- CODE-BARRES VISUEL -->
     <div class="barcode-container">
       ${generateBarcodeSvg(data.saleNumber)}
       <div class="barcode-text">*${escapeHtml(data.saleNumber)}*</div>
     </div>
 
-    <!-- FOOTER MENTIONS -->
     <div class="text-center">
-      <div class="thanks">★ MERCI DE VOTRE VISITE ★</div>
-      <div style="font-weight: bold; font-size: 10.5px; margin-bottom: 4px;">Bon rétablissement !</div>
+      <div class="thanks">MERCI DE VOTRE VISITE</div>
+      <div style="font-weight: 900; font-size: 11.5px; margin-bottom: 4px;">Bon retablissement !</div>
       <div class="disclaimer">
-        Les médicaments ne sont ni repris ni échangés.<br>
-        Conserver hors de portée des enfants (&lt; 25°C).
+        Les medicaments ne sont ni repris ni echanges.<br>
+        Conserver hors de portee des enfants (&lt; 25°C).
       </div>
-      <div class="sep-dashed" style="margin: 6px auto; width: 60%;"></div>
-      <div style="font-size: 8.5px; color: #444;">
-        Clinique Betesda • Système de Gestion Médicale Connecté
+      <div class="sep-dashed" style="margin: 6px auto; width: 70%;"></div>
+      <div style="font-size: 10px; font-weight: 800;">
+        Clinique Betesda - Officine Pharmaceutique
       </div>
     </div>
 
-    <div class="cut-guide">----------------- DÉCOUPE TICKET -----------------</div>
+    <div class="cut-guide">---------- DECOUPE TICKET ----------</div>
   </div>
 </body>
 </html>`;
@@ -465,20 +486,18 @@ export function printThermalReceipt(data: ThermalReceiptData): Promise<boolean> 
       return;
     }
 
-    // Supprimer tout ancien iframe d'impression thermique
     const existingFrame = document.getElementById('thermal-receipt-iframe');
     if (existingFrame) {
       existingFrame.remove();
     }
 
-    // Créer une iframe isolée
     const iframe = document.createElement('iframe');
     iframe.id = 'thermal-receipt-iframe';
     iframe.style.position = 'fixed';
     iframe.style.top = '-9999px';
     iframe.style.left = '-9999px';
     iframe.style.width = '80mm';
-    iframe.style.height = '100mm';
+    iframe.style.height = 'auto';
     iframe.style.border = 'none';
     iframe.style.opacity = '0';
     iframe.style.pointerEvents = 'none';
@@ -496,7 +515,6 @@ export function printThermalReceipt(data: ThermalReceiptData): Promise<boolean> 
     doc.write(htmlContent);
     doc.close();
 
-    // Attendre que le contenu de l'iframe soit rendu puis imprimer
     setTimeout(() => {
       try {
         iframe.contentWindow?.focus();
@@ -504,11 +522,10 @@ export function printThermalReceipt(data: ThermalReceiptData): Promise<boolean> 
         resolve(true);
       } catch (err) {
         console.error('Thermal print error:', err);
-        // Fallback print
         window.print();
         resolve(false);
       }
-    }, 280);
+    }, 300);
   });
 }
 
@@ -523,26 +540,27 @@ function escapeHtml(str: string | null | undefined): string {
 }
 
 /**
- * Génère un SVG de code-barres net et compatible avec les têtes d'impression thermique
+ * Génère un SVG de code-barres haute netteté (crispEdges, barres épaisses)
+ * pour impression thermique 203 DPI sans flou ni bavure.
  */
 function generateBarcodeSvg(text: string): string {
   const bars: Array<{ x: number; w: number }> = [];
-  let currentX = 10;
-  const hash = (text || 'VTE').split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+  let currentX = 8;
+  const safeText = text || 'VTE';
+  const hash = safeText.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
 
-  // Génération de barres pseudo-code 128 avec barres de garde
   // Guard bars
-  bars.push({ x: currentX, w: 2 });
-  currentX += 4;
-  bars.push({ x: currentX, w: 2 });
-  currentX += 4;
+  bars.push({ x: currentX, w: 3 });
+  currentX += 6;
+  bars.push({ x: currentX, w: 3 });
+  currentX += 6;
 
-  for (let i = 0; i < text.length; i++) {
-    const code = text.charCodeAt(i);
-    const w1 = (code % 3) + 1;
-    const s1 = ((code + i) % 2) + 2;
-    const w2 = ((code * 2) % 3) + 1;
-    const s2 = ((code + hash) % 3) + 2;
+  for (let i = 0; i < safeText.length; i++) {
+    const code = safeText.charCodeAt(i);
+    const w1 = (code % 3) + 2; // 2..4 px (évite les barres fines 1px floues)
+    const s1 = ((code + i) % 2) + 3;
+    const w2 = ((code * 2) % 3) + 2;
+    const s2 = ((code + hash) % 2) + 3;
 
     bars.push({ x: currentX, w: w1 });
     currentX += w1 + s1;
@@ -551,14 +569,14 @@ function generateBarcodeSvg(text: string): string {
   }
 
   // End guard bars
-  bars.push({ x: currentX, w: 2 });
-  currentX += 4;
-  bars.push({ x: currentX, w: 2 });
-  currentX += 10;
+  bars.push({ x: currentX, w: 3 });
+  currentX += 6;
+  bars.push({ x: currentX, w: 3 });
+  currentX += 8;
 
   const rects = bars
-    .map((b) => `<rect x="${b.x}" y="0" width="${b.w}" height="36" fill="#000" />`)
+    .map((b) => `<rect x="${b.x}" y="0" width="${b.w}" height="40" fill="#000000" />`)
     .join('');
 
-  return `<svg viewBox="0 0 ${currentX} 36" class="barcode-svg" xmlns="http://www.w3.org/2000/svg">${rects}</svg>`;
+  return `<svg viewBox="0 0 ${currentX} 40" class="barcode-svg" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg"><rect x="0" y="0" width="${currentX}" height="40" fill="#ffffff" />${rects}</svg>`;
 }

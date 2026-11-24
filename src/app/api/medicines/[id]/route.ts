@@ -46,10 +46,12 @@ export async function PUT(
     return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
   }
 
-  // Seule l'administration peut modifier des médicaments
-  if (session.role !== 'SUPER_ADMIN' && session.role !== 'CLINIC_ADMIN') {
+  // Administration et Comptable peuvent modifier (le comptable modifie les prix achat/vente)
+  const isAdmin = session.role === 'SUPER_ADMIN' || session.role === 'CLINIC_ADMIN';
+  const isAccountant = session.role === 'ACCOUNTANT';
+  if (!isAdmin && !isAccountant) {
     return NextResponse.json(
-      { error: "Accès refusé. Seule l'administration peut modifier les médicaments." },
+      { error: "Accès refusé. Seule l'administration ou la comptabilité peut modifier les médicaments." },
       { status: 403 }
     );
   }
@@ -66,6 +68,48 @@ export async function PUT(
     }
 
     const body = await request.json();
+
+    // Si Comptable : mise à jour sécurisée dédiée aux prix d'achat et de vente
+    if (isAccountant) {
+      const parsedPurchase =
+        body.purchasePrice !== undefined && body.purchasePrice !== ''
+          ? parseFloat(body.purchasePrice)
+          : existing.purchasePrice;
+      const parsedSelling =
+        body.sellingPrice !== undefined && body.sellingPrice !== ''
+          ? parseFloat(body.sellingPrice)
+          : existing.sellingPrice;
+
+      if (isNaN(parsedPurchase) || parsedPurchase < 0 || isNaN(parsedSelling) || parsedSelling < 0) {
+        return NextResponse.json(
+          { error: "Les prix d'achat et de vente doivent être des montants valides (>= 0)." },
+          { status: 400 }
+        );
+      }
+
+      const updated = await prisma.medicine.update({
+        where: { id },
+        data: {
+          purchasePrice: parsedPurchase,
+          sellingPrice: parsedSelling,
+        },
+        include: {
+          category: true,
+        },
+      });
+
+      await logAuditAction({
+        clinicId: session.clinicId,
+        userId: session.id,
+        action: AuditAction.UPDATE,
+        entity: 'Medicine',
+        entityId: updated.id,
+        details: `Mise à jour des prix (${updated.name}) par comptabilité : Achat ${existing.purchasePrice} -> ${updated.purchasePrice} Ar, Vente ${existing.sellingPrice} -> ${updated.sellingPrice} Ar`,
+      });
+
+      return NextResponse.json({ success: true, medicine: updated });
+    }
+
     const {
       name,
       genericName,
@@ -140,6 +184,84 @@ export async function PUT(
     console.error('Update medicine error:', error);
     return NextResponse.json(
       { error: 'Erreur lors de la mise à jour : ' + error.message },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  const session = await getSession();
+  if (!session) {
+    return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
+  }
+
+  if (
+    session.role !== 'SUPER_ADMIN' &&
+    session.role !== 'CLINIC_ADMIN' &&
+    session.role !== 'ACCOUNTANT'
+  ) {
+    return NextResponse.json(
+      { error: 'Accès refusé. Seule la direction ou la comptabilité peut modifier les prix.' },
+      { status: 403 }
+    );
+  }
+
+  const { id } = params;
+
+  try {
+    const existing = await prisma.medicine.findFirst({
+      where: { id, clinicId: session.clinicId },
+    });
+
+    if (!existing) {
+      return NextResponse.json({ error: 'Médicament non trouvé' }, { status: 404 });
+    }
+
+    const body = await request.json();
+    const parsedPurchase =
+      body.purchasePrice !== undefined && body.purchasePrice !== ''
+        ? parseFloat(body.purchasePrice)
+        : existing.purchasePrice;
+    const parsedSelling =
+      body.sellingPrice !== undefined && body.sellingPrice !== ''
+        ? parseFloat(body.sellingPrice)
+        : existing.sellingPrice;
+
+    if (isNaN(parsedPurchase) || parsedPurchase < 0 || isNaN(parsedSelling) || parsedSelling < 0) {
+      return NextResponse.json(
+        { error: "Les prix d'achat et de vente doivent être des montants valides (>= 0)." },
+        { status: 400 }
+      );
+    }
+
+    const updated = await prisma.medicine.update({
+      where: { id },
+      data: {
+        purchasePrice: parsedPurchase,
+        sellingPrice: parsedSelling,
+      },
+      include: {
+        category: true,
+      },
+    });
+
+    await logAuditAction({
+      clinicId: session.clinicId,
+      userId: session.id,
+      action: AuditAction.UPDATE,
+      entity: 'Medicine',
+      entityId: updated.id,
+      details: `Modification tarification ${updated.name} : Achat ${existing.purchasePrice} -> ${updated.purchasePrice} Ar, Vente ${existing.sellingPrice} -> ${updated.sellingPrice} Ar`,
+    });
+
+    return NextResponse.json({ success: true, medicine: updated });
+  } catch (error: any) {
+    console.error('Patch medicine price error:', error);
+    return NextResponse.json(
+      { error: 'Erreur lors de la mise à jour des prix : ' + error.message },
       { status: 500 }
     );
   }

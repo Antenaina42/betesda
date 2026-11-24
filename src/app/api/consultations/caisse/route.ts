@@ -83,10 +83,13 @@ export async function POST(request: NextRequest) {
     } = body;
 
     const nowDay = new Date().getDay();
-    const isWeekend =
-      isWeekendConsultation !== undefined
-        ? Boolean(isWeekendConsultation)
-        : nowDay === 0 || nowDay === 6;
+    const isTodayWeekend = nowDay === 0 || nowDay === 6;
+    // Le samedi et dimanche, l'option Consultation Week-end est automatiquement imposée et verrouillée
+    const isWeekend = isTodayWeekend
+      ? true
+      : isWeekendConsultation !== undefined
+      ? Boolean(isWeekendConsultation)
+      : false;
 
     const parsedAmount = Math.max(0, parseFloat(amount || '0'));
     if (!parsedAmount && !isFreeConsultation) {
@@ -281,7 +284,9 @@ export async function POST(request: NextRequest) {
         : isInfirmerie
         ? 'Infirmerie'
         : 'Consultation';
-      const targetRegister = isWeekend && !isInfirmerie ? 'CONSULTATION_WEEKEND' : 'PETITE_CAISSE';
+      // Les consultations week-end encaissées au comptoir vont dans la caisse week-end de l'Accueil (PETITE_CAISSE_WEEKEND)
+      // puis sont versées par l'Accueil vers la Grande Caisse Week-end (CONSULTATION_WEEKEND) pour le paiement des médecins.
+      const targetRegister = isWeekend && !isInfirmerie ? 'PETITE_CAISSE_WEEKEND' : 'PETITE_CAISSE';
 
       const cashTx = await tx.cashTransaction.create({
         data: {
