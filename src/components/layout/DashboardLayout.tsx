@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
 // import MessengerWidget from '@/components/chat/MessengerWidget';
@@ -43,13 +43,15 @@ export default function DashboardLayout({ user, children }: DashboardLayoutProps
     <div className="min-h-screen bg-[#F5F8FC] print:bg-white">
       {/* Sidebar */}
       <div className="no-print">
-        <Sidebar
-          user={user}
-          clinicName={clinicName}
-          isOpen={sidebarOpen}
-          onToggle={() => setSidebarOpen(!sidebarOpen)}
-          onCloseMobile={() => setSidebarOpen(false)}
-        />
+        <Suspense fallback={null}>
+          <Sidebar
+            user={user}
+            clinicName={clinicName}
+            isOpen={sidebarOpen}
+            onToggle={() => setSidebarOpen(!sidebarOpen)}
+            onCloseMobile={() => setSidebarOpen(false)}
+          />
+        </Suspense>
       </div>
 
       {/* Main Wrapper */}

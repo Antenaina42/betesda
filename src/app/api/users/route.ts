@@ -163,7 +163,7 @@ export async function POST(request: NextRequest) {
           firstName,
           lastName,
           email,
-          phone: phone || null,
+          phone: phone?.trim() || 'Néant',
           passwordHash,
           roleId,
           isActive: true,

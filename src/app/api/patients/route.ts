@@ -98,9 +98,9 @@ export async function POST(request: NextRequest) {
       generalNotes,
     } = body;
 
-    if (!firstName || !lastName || !birthDate || !phone) {
+    if (!firstName || !lastName || !birthDate) {
       return NextResponse.json(
-        { error: 'Le prénom, nom, date de naissance et téléphone sont obligatoires.' },
+        { error: 'Le prénom, nom et date de naissance sont obligatoires.' },
         { status: 400 }
       );
     }
@@ -118,24 +118,24 @@ export async function POST(request: NextRequest) {
         lastName,
         gender: gender === 'FEMALE' ? Gender.FEMALE : Gender.MALE,
         birthDate: new Date(birthDate),
-        bloodGroup: bloodGroup || 'Non défini',
-        phone,
-        email: email || null,
-        address: address || null,
-        city: city || 'Antananarivo',
-        emergencyContactName: emergencyContactName || null,
-        emergencyContactPhone: emergencyContactPhone || null,
-        emergencyContactRel: emergencyContactRel || null,
+        bloodGroup: bloodGroup || 'Néant',
+        phone: phone && String(phone).trim() && String(phone).trim() !== '+261 34' ? String(phone).trim() : 'Néant',
+        email: email && String(email).trim() ? String(email).trim() : null,
+        address: address && String(address).trim() ? String(address).trim() : 'Néant',
+        city: city && String(city).trim() ? String(city).trim() : 'Antananarivo',
+        emergencyContactName: emergencyContactName && String(emergencyContactName).trim() ? String(emergencyContactName).trim() : 'Néant',
+        emergencyContactPhone: emergencyContactPhone && String(emergencyContactPhone).trim() ? String(emergencyContactPhone).trim() : 'Néant',
+        emergencyContactRel: emergencyContactRel && String(emergencyContactRel).trim() ? String(emergencyContactRel).trim() : 'Néant',
         primaryDoctorId: primaryDoctorId || null,
         isActive: true,
         medicalRecord: {
           create: {
-            allergies: allergies || null,
-            chronicDiseases: chronicDiseases || null,
-            surgicalHistory: surgicalHistory || null,
-            familyHistory: familyHistory || null,
-            habits: habits || null,
-            generalNotes: generalNotes || 'Dossier créé via Clinique Betesda.',
+            allergies: allergies && String(allergies).trim() ? String(allergies).trim() : 'Néant',
+            chronicDiseases: chronicDiseases && String(chronicDiseases).trim() ? String(chronicDiseases).trim() : 'Néant',
+            surgicalHistory: surgicalHistory && String(surgicalHistory).trim() ? String(surgicalHistory).trim() : 'Néant',
+            familyHistory: familyHistory && String(familyHistory).trim() ? String(familyHistory).trim() : 'Néant',
+            habits: habits && String(habits).trim() ? String(habits).trim() : 'Néant',
+            generalNotes: generalNotes && String(generalNotes).trim() ? String(generalNotes).trim() : 'Néant',
           },
         },
       },

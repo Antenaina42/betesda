@@ -114,7 +114,7 @@ export default function DoctorsClient({
   };
 
   const getDoctorPhone = (doc: DoctorItem) => {
-    return doc.phone || doc.user?.phone || 'Non renseigné';
+    return doc.phone || doc.user?.phone || 'Néant';
   };
 
   const filteredDoctors = useMemo(() => {
@@ -600,13 +600,13 @@ export default function DoctorsClient({
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    N° Ordre des Médecins (Optionnel)
+                    N° Ordre des Médecins (Optionnel — Néant par défaut)
                   </label>
                   <input
                     type="text"
                     value={formData.licenseNumber}
                     onChange={(e) => setFormData({ ...formData, licenseNumber: e.target.value })}
-                    placeholder="Ex: MED-2026-042"
+                    placeholder="Néant (ou ex: MED-2026-042)"
                     className="w-full px-3 py-2 text-xs rounded-lg border border-slate-200 focus:outline-hidden focus:border-blue-500"
                   />
                 </div>
@@ -632,13 +632,13 @@ export default function DoctorsClient({
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Téléphone (Contact cabinet / urgence)
+                    Téléphone (Optionnel — Néant par défaut)
                   </label>
                   <input
                     type="tel"
                     value={formData.phone}
                     onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                    placeholder="Ex: +261 34 00 123 45"
+                    placeholder="Néant (ou +261 34 00 123 45)"
                     className="w-full px-3 py-2 text-xs rounded-lg border border-slate-200 focus:outline-hidden focus:border-blue-500"
                   />
                 </div>
@@ -651,7 +651,7 @@ export default function DoctorsClient({
                     type="email"
                     value={formData.email}
                     onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                    placeholder="docteur@clinique.mg"
+                    placeholder="Néant (ou docteur@clinique.mg)"
                     className="w-full px-3 py-2 text-xs rounded-lg border border-slate-200 focus:outline-hidden focus:border-blue-500"
                   />
                 </div>

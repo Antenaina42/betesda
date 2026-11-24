@@ -129,7 +129,8 @@ export default function DashboardClient({
   const isReceptionist = user.role === 'RECEPTIONIST';
   const isPharmacist = user.role === 'PHARMACIST';
   const isDoctor = user.role === 'DOCTOR';
-  const isAdmin = user.role === 'SUPER_ADMIN' || user.role === 'CLINIC_ADMIN';
+  const isAccountant = user.role === 'ACCOUNTANT';
+  const isAdmin = user.role === 'SUPER_ADMIN' || user.role === 'CLINIC_ADMIN' || user.role === 'ACCOUNTANT';
 
   // Contrôles interactifs du tableau de bord Administrateur
   const todayKey = useMemo(() => toLocalDateKey(new Date()), []);
@@ -363,7 +364,7 @@ export default function DashboardClient({
         badge: 'Nouveau Patient',
         badgeCls: 'bg-purple-50 text-purple-700 border-purple-200',
         title: `${p.lastName} ${p.firstName} (${p.patientNumber})`,
-        subtitle: `Tél : ${p.phone || 'Non renseigné'} • Dossier créé`,
+        subtitle: `Tél : ${p.phone || 'Néant'} • Dossier créé`,
         actor: 'Accueil',
       });
     });
@@ -512,11 +513,18 @@ export default function DashboardClient({
           {isAdmin && (
             <>
               <Link
-                href="/expenses"
+                href={isAccountant ? '/expenses?tab=expenses' : '/expenses'}
                 className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-black bg-emerald-500 hover:bg-emerald-600 text-white shadow-sm transition-colors"
               >
                 <Wallet className="w-4 h-4" />
-                <span>Gestion Solde</span>
+                <span>{isAccountant ? 'Grande Caisse & Dépenses' : 'Gestion Solde'}</span>
+              </Link>
+              <Link
+                href="/expenses?tab=weekend-consultations"
+                className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold bg-violet-500 hover:bg-violet-600 text-white shadow-sm transition-colors"
+              >
+                <Calendar className="w-4 h-4" />
+                <span>Consultations Week-end</span>
               </Link>
               <Link
                 href="/payments?tab=daily-sheet"
@@ -524,13 +532,6 @@ export default function DashboardClient({
               >
                 <ClipboardList className="w-4 h-4 text-blue-600" />
                 <span>Bordereau Journalier</span>
-              </Link>
-              <Link
-                href="/payments?tab=all"
-                className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold bg-white/10 hover:bg-white/20 text-white border border-white/25 backdrop-blur-xs transition-colors"
-              >
-                <DollarSign className="w-4 h-4" />
-                <span>Flux Financiers</span>
               </Link>
             </>
           )}
@@ -646,7 +647,7 @@ export default function DashboardClient({
                     <div key={p.id} className="py-2.5 flex items-center justify-between text-xs">
                       <div>
                         <p className="font-semibold text-slate-800">{p.lastName} {p.firstName}</p>
-                        <p className="text-[11px] text-slate-400">{p.patientNumber} • {p.phone || 'Pas de tél'}</p>
+                        <p className="text-[11px] text-slate-400">{p.patientNumber} • {p.phone || 'Néant'}</p>
                       </div>
                       <Link
                         href="/consultations/caisse"

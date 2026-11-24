@@ -9,8 +9,8 @@ export default async function PaymentsCashPage() {
   const session = await getSession();
   if (!session) redirect('/login');
 
-  // RBAC guard: Seuls Super Admin et Administrateur de la clinique ont la vue complète de tous les mouvements financiers
-  if (session.role !== 'SUPER_ADMIN' && session.role !== 'CLINIC_ADMIN') {
+  // RBAC guard: Super Admin, Administrateur et Comptable ont la vue complète de tous les mouvements financiers
+  if (session.role !== 'SUPER_ADMIN' && session.role !== 'CLINIC_ADMIN' && session.role !== 'ACCOUNTANT') {
     redirect('/dashboard');
   }
 

@@ -105,17 +105,29 @@ export default function PharmacyInventoryClient({
   // Sous-étapes de la création : 1 = Sélection des médicaments, 2 = Saisie du comptage
   const [inventoryStep, setInventoryStep] = useState<1 | 2>(1);
 
-  // Titre & Notes de l'inventaire en cours
+  // Titre & Notes de l'inventaire journalier en cours
   const [inventoryTitle, setInventoryTitle] = useState<string>(
-    `Inventaire Pharmacie du ${new Date().toLocaleDateString('fr-FR')}`
+    `Inventaire Journalier Pharmacie du ${new Date().toLocaleDateString('fr-FR')}`
   );
   const [inventoryNotes, setInventoryNotes] = useState<string>('');
 
   // Liste des identifiants de médicaments sélectionnés pour l'inventaire
   const [selectedMedicineIds, setSelectedMedicineIds] = useState<Set<string>>(new Set());
 
-  // Valeurs saisies lors du comptage physique : { [medicineId]: { countedStock: number, reason: string } }
-  const [counts, setCounts] = useState<Record<string, { countedStock: number; reason: string }>>({});
+  // Valeurs saisies lors du comptage physique : { [medicineId]: { countedStock: number, reason: string, remark: string } }
+  const [counts, setCounts] = useState<Record<string, { countedStock: number; reason: string; remark: string }>>({});
+
+  // Helper pour séparer Motif et Remarque stockés dans reason
+  const parseReasonAndRemark = (raw?: string | null) => {
+    if (!raw || !raw.trim()) return { motif: 'Conforme', remark: 'Néant' };
+    const idx = raw.indexOf(' | Remarque : ');
+    if (idx !== -1) {
+      const motif = raw.slice(0, idx).trim() || 'Écart constaté';
+      const remark = raw.slice(idx + ' | Remarque : '.length).trim() || 'Néant';
+      return { motif, remark };
+    }
+    return { motif: raw.trim(), remark: 'Néant' };
+  };
 
   // Filtres de sélection (Étape 1)
   const [searchQuery, setSearchQuery] = useState('');
@@ -222,6 +234,10 @@ export default function PharmacyInventoryClient({
     });
   };
 
+  const selectAllCatalogue = () => {
+    setSelectedMedicineIds(new Set(medicines.map((m) => m.id)));
+  };
+
   const clearAllSelection = () => {
     setSelectedMedicineIds(new Set());
   };
@@ -234,11 +250,12 @@ export default function PharmacyInventoryClient({
   // Initialisation des données de comptage lors du passage à l'étape 2
   const handleProceedToCount = () => {
     if (selectedMedicineIds.size === 0) return;
-    const initialCounts: Record<string, { countedStock: number; reason: string }> = {};
+    const initialCounts: Record<string, { countedStock: number; reason: string; remark: string }> = {};
     selectedMedicinesList.forEach((m) => {
       initialCounts[m.id] = {
         countedStock: counts[m.id]?.countedStock !== undefined ? counts[m.id].countedStock : m.currentStock,
         reason: counts[m.id]?.reason || 'Conforme',
+        remark: counts[m.id]?.remark || '',
       };
     });
     setCounts(initialCounts);
@@ -252,8 +269,9 @@ export default function PharmacyInventoryClient({
     setCounts((prev) => ({
       ...prev,
       [medicineId]: {
-        ...prev[medicineId],
         countedStock: safeVal,
+        reason: prev[medicineId]?.reason || 'Conforme',
+        remark: prev[medicineId]?.remark || '',
       },
     }));
   };
@@ -262,8 +280,20 @@ export default function PharmacyInventoryClient({
     setCounts((prev) => ({
       ...prev,
       [medicineId]: {
-        ...prev[medicineId],
+        countedStock: prev[medicineId]?.countedStock ?? 0,
         reason,
+        remark: prev[medicineId]?.remark || '',
+      },
+    }));
+  };
+
+  const handleRemarkChange = (medicineId: string, remark: string) => {
+    setCounts((prev) => ({
+      ...prev,
+      [medicineId]: {
+        countedStock: prev[medicineId]?.countedStock ?? 0,
+        reason: prev[medicineId]?.reason || 'Conforme',
+        remark,
       },
     }));
   };
@@ -317,11 +347,12 @@ export default function PharmacyInventoryClient({
 
     try {
       const itemsPayload = selectedMedicinesList.map((m) => {
-        const itemData = counts[m.id] || { countedStock: m.currentStock, reason: 'Conforme' };
+        const itemData = counts[m.id] || { countedStock: m.currentStock, reason: 'Conforme', remark: '' };
         return {
           medicineId: m.id,
           countedStock: itemData.countedStock,
           reason: itemData.reason,
+          remark: itemData.remark?.trim() || 'Néant',
         };
       });
 
@@ -330,7 +361,7 @@ export default function PharmacyInventoryClient({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title: inventoryTitle,
-          notes: inventoryNotes,
+          notes: inventoryNotes.trim() || 'Néant',
           items: itemsPayload,
         }),
       });
@@ -544,6 +575,15 @@ export default function PharmacyInventoryClient({
                 {/* Boutons d'actions rapides de sélection */}
                 <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100">
                   <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={selectAllCatalogue}
+                      className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 transition-colors flex items-center gap-1.5"
+                    >
+                      <ClipboardCheck className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Tout le Catalogue • Inventaire Journalier ({medicines.length})</span>
+                    </button>
+
                     <button
                       type="button"
                       onClick={selectAllFiltered}
@@ -873,13 +913,13 @@ export default function PharmacyInventoryClient({
 
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Notes / Observations générales (Optionnel)
+                      Notes / Observations générales (Optionnel — Néant par défaut)
                     </label>
                     <input
                       type="text"
                       value={inventoryNotes}
                       onChange={(e) => setInventoryNotes(e.target.value)}
-                      placeholder="Ex: Rayon B contrôlé après livraison, vérification des dates..."
+                      placeholder="Néant (ou saisir une observation générale du jour...)"
                       className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
                     />
                   </div>
@@ -961,14 +1001,15 @@ export default function PharmacyInventoryClient({
                         <th className="py-2.5 px-3 text-center w-52 bg-indigo-50/40">
                           Stock Réel Compté
                         </th>
-                        <th className="py-2.5 px-3 text-center w-28">Écart</th>
-                        <th className="py-2.5 px-3 text-right w-32">Impact (Ar)</th>
-                        <th className="py-2.5 px-3 w-48">Motif / Justification</th>
+                        <th className="py-2.5 px-3 text-center w-24">Écart</th>
+                        <th className="py-2.5 px-3 text-right w-28">Impact (Ar)</th>
+                        <th className="py-2.5 px-3 w-44">Motif / Justification</th>
+                        <th className="py-2.5 px-3 min-w-[210px]">Remarque sur l'écart (Journalier)</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {selectedMedicinesList.map((m) => {
-                        const itemState = counts[m.id] || { countedStock: m.currentStock, reason: 'Conforme' };
+                        const itemState = counts[m.id] || { countedStock: m.currentStock, reason: 'Conforme', remark: '' };
                         const theoretical = m.currentStock;
                         const counted = itemState.countedStock;
                         const diff = counted - theoretical;
@@ -1075,6 +1116,23 @@ export default function PharmacyInventoryClient({
                                 <option value="Autre motif">Autre motif</option>
                               </select>
                             </td>
+                            <td className="py-3 px-3">
+                              <input
+                                type="text"
+                                value={itemState.remark || ''}
+                                onChange={(e) => handleRemarkChange(m.id, e.target.value)}
+                                placeholder={
+                                  diff !== 0
+                                    ? "Précisez la remarque sur cet écart du jour..."
+                                    : "Néant"
+                                }
+                                className={`w-full py-1.5 px-2.5 text-xs rounded-lg border focus:outline-hidden focus:ring-2 focus:ring-indigo-500 ${
+                                  diff !== 0
+                                    ? 'border-amber-400 bg-amber-50/70 text-slate-900 font-medium placeholder:text-amber-700/70'
+                                    : 'border-slate-200 bg-white text-slate-600 placeholder:text-slate-400'
+                                }`}
+                              />
+                            </td>
                           </tr>
                         );
                       })}
@@ -1158,12 +1216,13 @@ export default function PharmacyInventoryClient({
                       <th className="border border-slate-300 p-2 text-center w-20">Compté Réel</th>
                       <th className="border border-slate-300 p-2 text-center w-20">Écart</th>
                       <th className="border border-slate-300 p-2 text-right w-24">Impact (Ar)</th>
-                      <th className="border border-slate-300 p-2 text-left">Motif / Justification</th>
+                      <th className="border border-slate-300 p-2 text-left">Motif</th>
+                      <th className="border border-slate-300 p-2 text-left">Remarque sur l'écart</th>
                     </tr>
                   </thead>
                   <tbody>
                     {selectedMedicinesList.map((m) => {
-                      const itemState = counts[m.id] || { countedStock: m.currentStock, reason: 'Conforme' };
+                      const itemState = counts[m.id] || { countedStock: m.currentStock, reason: 'Conforme', remark: '' };
                       const diff = itemState.countedStock - m.currentStock;
                       const impact = diff * m.purchasePrice;
                       return (
@@ -1181,6 +1240,7 @@ export default function PharmacyInventoryClient({
                             {impact !== 0 ? formatCurrency(impact) : '-'}
                           </td>
                           <td className="border border-slate-300 p-2">{itemState.reason || 'Conforme'}</td>
+                          <td className="border border-slate-300 p-2">{itemState.remark?.trim() || 'Néant'}</td>
                         </tr>
                       );
                     })}
@@ -1502,10 +1562,13 @@ export default function PharmacyInventoryClient({
                     <th className="py-2.5 px-3 text-center">Écart</th>
                     <th className="py-2.5 px-3 text-right">Impact Financier</th>
                     <th className="py-2.5 px-3">Motif Justifié</th>
+                    <th className="py-2.5 px-3">Remarque sur l'écart</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {selectedPastInventory.items.map((it) => (
+                  {selectedPastInventory.items.map((it) => {
+                    const parsed = parseReasonAndRemark(it.reason);
+                    return (
                     <tr
                       key={it.id}
                       className={it.difference !== 0 ? 'bg-amber-50/20' : 'hover:bg-slate-50/50'}
@@ -1549,9 +1612,17 @@ export default function PharmacyInventoryClient({
                           {formatCurrency(it.financialImpact)}
                         </span>
                       </td>
-                      <td className="py-2 px-3 text-slate-600">{it.reason || 'Conforme'}</td>
+                      <td className="py-2 px-3 text-slate-700 font-medium">{parsed.motif}</td>
+                      <td className="py-2 px-3 text-slate-600">
+                        {parsed.remark !== 'Néant' ? (
+                          <span className="font-medium text-amber-800">{parsed.remark}</span>
+                        ) : (
+                          <span className="text-slate-400 italic">Néant</span>
+                        )}
+                      </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

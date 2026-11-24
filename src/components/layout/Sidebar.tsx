@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import Image from 'next/image';
 import {
   LayoutDashboard,
@@ -30,7 +30,10 @@ import {
   ShoppingBag,
   PackagePlus,
   ArrowDownRight,
+  ArrowRightLeft,
   Wallet,
+  Landmark,
+  Calendar,
   Smile,
 } from 'lucide-react';
 import { AuthUser } from '@/types';
@@ -46,6 +49,8 @@ interface SidebarProps {
 
 export default function Sidebar({ user, clinicName, isOpen, onToggle, onCloseMobile }: SidebarProps) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const currentSearchString = searchParams ? searchParams.toString() : '';
   const roleInfo = getRoleBadgeLabel(user.role);
 
   const [openMenus, setOpenMenus] = useState<Record<string, boolean>>({
@@ -91,12 +96,17 @@ export default function Sidebar({ user, clinicName, isOpen, onToggle, onCloseMob
               {
                 label: 'Dépenses Petite Caisse',
                 href: '/expenses?tab=expenses&register=PETITE_CAISSE',
-                icon: Wallet,
+                icon: ArrowDownRight,
+              },
+              {
+                label: 'Versements vers Grande Caisse',
+                href: '/expenses?tab=transfers&register=PETITE_CAISSE',
+                icon: ArrowRightLeft,
               },
               {
                 label: 'Bons de sortie Médicaments',
                 href: '/expenses?tab=clinic-medicines',
-                icon: ArrowDownRight,
+                icon: Pill,
               },
             ],
           },
@@ -197,11 +207,11 @@ export default function Sidebar({ user, clinicName, isOpen, onToggle, onCloseMob
           },
         ];
 
-      // 5. COMPTE COMPTABLE
+      // 5. COMPTE COMPTABLE (GESTION GRANDE CAISSE, TRANSFERTS, DÉPENSES, BANQUE & CONSULTATIONS WEEK-END)
       case 'ACCOUNTANT':
         return [
           {
-            title: 'ESPACE FINANCES',
+            title: 'ESPACE COMPTABILITÉ',
             items: [
               {
                 label: 'Tableau de bord',
@@ -211,17 +221,47 @@ export default function Sidebar({ user, clinicName, isOpen, onToggle, onCloseMob
             ],
           },
           {
-            title: 'FINANCES & CAISSE',
+            title: 'GRANDE CAISSE & TRÉSORERIE',
             items: [
               {
-                label: 'Gestion Solde',
-                href: '/expenses',
-                icon: Wallet,
+                label: 'Dépenses & Décaissements',
+                href: '/expenses?tab=expenses',
+                icon: ArrowDownRight,
               },
               {
-                label: 'Cabinet dentaire',
-                href: '/dentistry',
-                icon: Smile,
+                label: 'Transferts entre Caisses',
+                href: '/expenses?tab=transfers',
+                icon: ArrowRightLeft,
+              },
+              {
+                label: 'Mouvements Banque',
+                href: '/expenses?tab=bank',
+                icon: Landmark,
+              },
+              {
+                label: 'Consultations Week-end',
+                href: '/expenses?tab=weekend-consultations',
+                icon: Calendar,
+              },
+              {
+                label: 'Fiches de Paie',
+                href: '/expenses?tab=payroll',
+                icon: Users,
+              },
+              {
+                label: 'Bons de sortie Médicaments',
+                href: '/expenses?tab=clinic-medicines',
+                icon: Pill,
+              },
+            ],
+          },
+          {
+            title: 'SUIVI FINANCIER & FACTURATION',
+            items: [
+              {
+                label: 'Bordereau journalier',
+                href: '/payments?tab=daily-sheet',
+                icon: ClipboardList,
               },
               {
                 label: 'Flux financiers',
@@ -229,9 +269,14 @@ export default function Sidebar({ user, clinicName, isOpen, onToggle, onCloseMob
                 icon: DollarSign,
               },
               {
-                label: 'Bordereau journalier',
-                href: '/payments?tab=daily-sheet',
-                icon: ClipboardList,
+                label: 'Bénéfices pharmacie',
+                href: '/pharmacy/financials',
+                icon: TrendingUp,
+              },
+              {
+                label: 'Cabinet dentaire',
+                href: '/dentistry',
+                icon: Smile,
               },
               {
                 key: 'invoices',
@@ -269,6 +314,11 @@ export default function Sidebar({ user, clinicName, isOpen, onToggle, onCloseMob
                 label: 'Gestion Solde',
                 href: '/expenses',
                 icon: Wallet,
+              },
+              {
+                label: 'Consultations Week-end',
+                href: '/expenses?tab=weekend-consultations',
+                icon: Calendar,
               },
               {
                 label: 'Bordereau journalier',
@@ -406,12 +456,21 @@ export default function Sidebar({ user, clinicName, isOpen, onToggle, onCloseMob
                 const isSub = Boolean(item.subItems);
                 const isSubOpen = openMenus[item.key || ''];
                 const hasQuery = Boolean(item.href && item.href.includes('?'));
-                const currentPathWithSearch = typeof window !== 'undefined' ? `${pathname}${window.location.search}` : pathname;
+                const currentPathWithSearch = currentSearchString ? `${pathname}?${currentSearchString}` : pathname;
                 const isActive = item.href
                   ? hasQuery
-                    ? currentPathWithSearch === item.href
+                    ? (() => {
+                        const [itemBase, itemQuery] = item.href.split('?');
+                        if (pathname !== itemBase) return false;
+                        const itemParams = new URLSearchParams(itemQuery);
+                        const itemTab = itemParams.get('tab');
+                        if (itemTab) {
+                          return searchParams?.get('tab') === itemTab;
+                        }
+                        return currentPathWithSearch === item.href;
+                      })()
                     : (user.role === 'RECEPTIONIST' && item.href === '/consultations/caisse' && pathname.startsWith('/consultations')) ||
-                      (pathname === item.href && (typeof window === 'undefined' || !window.location.search || (!item.href.startsWith('/expenses') && !item.href.startsWith('/payments'))))
+                      (pathname === item.href && (!currentSearchString || (!item.href.startsWith('/expenses') && !item.href.startsWith('/payments'))))
                   : false;
 
                 if (!isSub) {

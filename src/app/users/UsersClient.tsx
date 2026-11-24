@@ -146,7 +146,7 @@ export default function UsersClient({
       case 'NURSE':
         return { label: 'Infirmier(ère)', color: 'bg-teal-100 text-teal-700 border-teal-200' };
       case 'ACCOUNTANT':
-        return { label: 'Comptable', color: 'bg-slate-100 text-slate-700 border-slate-200' };
+        return { label: 'Comptable (Grande Caisse)', color: 'bg-rose-100 text-rose-800 border-rose-200' };
       case 'RECEPTIONIST':
       default:
         return { label: 'Accueil / Réception', color: 'bg-amber-100 text-amber-800 border-amber-200' };
@@ -522,7 +522,7 @@ export default function UsersClient({
             }`}
           >
             <ShieldCheck className="w-4 h-4" />
-            <span>Comptes Utilisateurs (4 rôles) ({users.length})</span>
+            <span>Comptes Utilisateurs (5 rôles) ({users.length})</span>
           </button>
         </div>
 
@@ -607,7 +607,7 @@ export default function UsersClient({
                           )}
                         </td>
                         <td className="py-2.5 px-3 text-slate-600 font-mono">
-                          {emp.phone || <span className="text-slate-400 italic">Non renseigné</span>}
+                          {emp.phone || <span className="text-slate-400 italic">Néant</span>}
                         </td>
                         <td className="py-2.5 px-3 font-medium text-slate-700">
                           <div className="flex flex-wrap items-center gap-1.5">
@@ -740,7 +740,7 @@ export default function UsersClient({
               >
                 Tous ({users.length})
               </button>
-              {['RECEPTIONIST', 'PHARMACIST', 'CLINIC_ADMIN', 'SUPER_ADMIN'].map((rName) => {
+              {['RECEPTIONIST', 'PHARMACIST', 'ACCOUNTANT', 'CLINIC_ADMIN', 'SUPER_ADMIN'].map((rName) => {
                 const count = users.filter((u) => u.role.name === rName).length;
                 const badge = getRoleBadge(rName);
                 return (
@@ -792,7 +792,7 @@ export default function UsersClient({
                           {u.email}
                         </td>
                         <td className="py-2.5 px-3 text-slate-600 font-mono">
-                          {u.phone || <span className="text-slate-400 italic">Non renseigné</span>}
+                          {u.phone || <span className="text-slate-400 italic">Néant</span>}
                         </td>
                         <td className="py-2.5 px-3">
                           <span
@@ -904,7 +904,7 @@ export default function UsersClient({
                     type="text"
                     value={employeeForm.phone}
                     onChange={(e) => setEmployeeForm({ ...employeeForm, phone: e.target.value })}
-                    placeholder="Ex: 034 00 000 00"
+                    placeholder="Néant (ou 034 00 000 00)"
                     className="w-full px-3 py-2 rounded-lg border border-slate-200 focus:outline-hidden focus:border-blue-500"
                   />
                 </div>
@@ -1039,7 +1039,7 @@ export default function UsersClient({
                     type="text"
                     value={userForm.phone}
                     onChange={(e) => setUserForm({ ...userForm, phone: e.target.value })}
-                    placeholder="034 00 000 00"
+                    placeholder="Néant (ou 034 00 000 00)"
                     className="w-full px-3 py-2 rounded-lg border border-slate-200 font-mono"
                   />
                 </div>
@@ -1062,7 +1062,7 @@ export default function UsersClient({
               {/* SÉLECTION RÔLE : STRICTEMENT LES 4 TYPES */}
               <div>
                 <label className="block font-bold text-slate-700 mb-1.5">
-                  Type d'Utilisateur (4 Rôles Disponibles) *
+                  Type d'Utilisateur (5 Rôles Disponibles) *
                 </label>
                 <div className="grid grid-cols-2 gap-2">
                   {roles.map((r) => {

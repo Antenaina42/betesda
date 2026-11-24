@@ -615,11 +615,191 @@ export async function POST(request: NextRequest) {
     }
 
     // =========================================================================
-    // CAS 1 : DÉPENSE STANDARD / SORTIE DE CAISSE (Jirama, Loyer, Achats, etc.)
+    // CAS 0c : ENTRÉE BUDGET CONSULTATION WEEK-END (SAMEDI / DIMANCHE)
+    // =========================================================================
+    if (action === 'WEEKEND_CONSULTATION_INCOME') {
+      const {
+        amount,
+        patientName,
+        doctorName,
+        actName,
+        paymentMethod,
+        transactionDate,
+        notes,
+        attachmentUrl,
+        attachmentName,
+      } = body;
+
+      const numAmount = parseFloat(amount);
+      if (!numAmount || numAmount <= 0) {
+        return NextResponse.json({ error: 'Le montant de la consultation week-end doit être supérieur à zéro.' }, { status: 400 });
+      }
+
+      const txDate = transactionDate ? new Date(transactionDate) : new Date();
+      const currentYear = new Date().getFullYear();
+      const weCount = await prisma.cashTransaction.count({
+        where: { clinicId: session.clinicId, reference: { startsWith: 'CONS-WE' } },
+      });
+      const consRef = `CONS-WE-${currentYear}-${String(weCount + 1).padStart(4, '0')}`;
+      const operatorName = `${session.firstName} ${session.lastName}`.trim();
+      const cleanPatient = patientName && String(patientName).trim() ? String(patientName).trim() : 'Néant';
+      const cleanDoctor = doctorName && String(doctorName).trim() ? String(doctorName).trim() : 'Médecin de garde';
+      const cleanAct = actName && String(actName).trim() ? String(actName).trim() : 'Consultation Week-end';
+      const cleanNotes = notes && String(notes).trim() ? String(notes).trim() : 'Néant';
+
+      const createdTx = await prisma.cashTransaction.create({
+        data: {
+          clinicId: session.clinicId,
+          type: CashTransactionType.INCOME,
+          category: 'Consultation Week-end',
+          amount: numAmount,
+          paymentMethod: (paymentMethod as PaymentMethod) || PaymentMethod.CASH,
+          reference: consRef,
+          description: `[WEEK-END] ${cleanAct} (${consRef}) | Patient : ${cleanPatient} | Médecin : ${cleanDoctor} | Remarque : ${cleanNotes} | Saisi par : ${operatorName}`.slice(0, 255),
+          transactionDate: txDate,
+          performedById: session.id,
+          attachmentUrl: attachmentUrl || null,
+          attachmentName: attachmentName || null,
+          cashRegister: 'CONSULTATION_WEEKEND',
+        },
+        include: {
+          performedBy: { select: { firstName: true, lastName: true } },
+        },
+      });
+
+      await logAuditAction({
+        clinicId: session.clinicId,
+        userId: session.id,
+        action: AuditAction.CREATE,
+        entity: 'WeekendConsultation',
+        entityId: createdTx.id,
+        details: `Entrée Consultation Week-end de ${numAmount} Ar (${consRef}) - Médecin : ${cleanDoctor}`,
+      });
+
+      return NextResponse.json({ success: true, transaction: createdTx });
+    }
+
+    // =========================================================================
+    // CAS 0d : PAIEMENT HONORAIRES MÉDECIN DEPUIS LE BUDGET CONSULTATIONS WEEK-END
+    // =========================================================================
+    if (action === 'WEEKEND_DOCTOR_PAYMENT') {
+      if (!isAdminOrAccountant) {
+        return NextResponse.json(
+          { error: 'Le paiement des médecins sur le budget week-end est réservé au comptable ou à la direction.' },
+          { status: 403 }
+        );
+      }
+
+      const {
+        doctorName,
+        amount,
+        paymentMethod,
+        transactionDate,
+        weekendPeriod,
+        notes,
+        attachmentUrl,
+        attachmentName,
+      } = body;
+
+      const numAmount = parseFloat(amount);
+      if (!numAmount || numAmount <= 0) {
+        return NextResponse.json({ error: 'Le montant à verser au médecin doit être supérieur à zéro.' }, { status: 400 });
+      }
+      if (!doctorName || !String(doctorName).trim()) {
+        return NextResponse.json({ error: 'Veuillez sélectionner ou saisir le nom du médecin bénéficiaire.' }, { status: 400 });
+      }
+
+      // Calcul du budget disponible Consultations Week-end (Transactions CONSULTATION_WEEKEND + Consultations Samedi/Dimanche existantes)
+      const [weekendTxs, allPaidConsults] = await Promise.all([
+        prisma.cashTransaction.findMany({
+          where: { clinicId: session.clinicId, cashRegister: 'CONSULTATION_WEEKEND' },
+          select: { type: true, amount: true, reference: true },
+        }),
+        prisma.consultation.findMany({
+          where: { patient: { clinicId: session.clinicId } },
+          select: {
+            consultationDate: true,
+            invoice: { select: { invoiceNumber: true, totalAmount: true, paidAmount: true } },
+          },
+        }),
+      ]);
+
+      const weRefs = new Set(weekendTxs.map((t) => t.reference).filter(Boolean));
+      const directWeIncome = weekendTxs
+        .filter((t) => t.type === CashTransactionType.INCOME)
+        .reduce((s, t) => s + t.amount, 0);
+      const historicalSatSunIncome = allPaidConsults
+        .filter((c) => {
+          const day = new Date(c.consultationDate).getDay();
+          const invRef = c.invoice?.invoiceNumber;
+          return (day === 0 || day === 6) && (!invRef || !weRefs.has(invRef));
+        })
+        .reduce((s, c) => s + Number(c.invoice?.paidAmount ?? c.invoice?.totalAmount ?? 0), 0);
+      const totalWePaidOut = weekendTxs
+        .filter((t) => t.type === CashTransactionType.EXPENSE)
+        .reduce((s, t) => s + t.amount, 0);
+
+      const availableWeekendBudget = Math.max(0, directWeIncome + historicalSatSunIncome - totalWePaidOut);
+
+      if (numAmount > availableWeekendBudget) {
+        return NextResponse.json(
+          {
+            error: `Le paiement demandé (${numAmount.toLocaleString('fr-FR')} Ar) dépasse le budget disponible des consultations week-end (${availableWeekendBudget.toLocaleString('fr-FR')} Ar).`,
+          },
+          { status: 400 }
+        );
+      }
+
+      const txDate = transactionDate ? new Date(transactionDate) : new Date();
+      const currentYear = new Date().getFullYear();
+      const payCount = await prisma.cashTransaction.count({
+        where: { clinicId: session.clinicId, reference: { startsWith: 'PAY-MED-WE' } },
+      });
+      const payRef = `PAY-MED-WE-${currentYear}-${String(payCount + 1).padStart(4, '0')}`;
+      const operatorName = `${session.firstName} ${session.lastName}`.trim();
+      const cleanDoc = String(doctorName).trim();
+      const cleanPeriod = weekendPeriod && String(weekendPeriod).trim() ? String(weekendPeriod).trim() : 'Week-end';
+      const cleanNotes = notes && String(notes).trim() ? String(notes).trim() : 'Néant';
+
+      const paymentTx = await prisma.cashTransaction.create({
+        data: {
+          clinicId: session.clinicId,
+          type: CashTransactionType.EXPENSE,
+          category: 'Paiement Médecin (Week-end)',
+          amount: numAmount,
+          paymentMethod: (paymentMethod as PaymentMethod) || PaymentMethod.CASH,
+          reference: payRef,
+          description: `Paiement Médecin Week-end (${payRef}) | Bénéficiaire : ${cleanDoc} | Période : ${cleanPeriod} | Remarque : ${cleanNotes} | Décaissé par : ${operatorName}`.slice(0, 255),
+          transactionDate: txDate,
+          performedById: session.id,
+          attachmentUrl: attachmentUrl || null,
+          attachmentName: attachmentName || null,
+          cashRegister: 'CONSULTATION_WEEKEND',
+        },
+        include: {
+          performedBy: { select: { firstName: true, lastName: true } },
+        },
+      });
+
+      await logAuditAction({
+        clinicId: session.clinicId,
+        userId: session.id,
+        action: AuditAction.CREATE,
+        entity: 'WeekendDoctorPayment',
+        entityId: paymentTx.id,
+        details: `Paiement Médecin Week-end de ${numAmount} Ar à ${cleanDoc} (${payRef})`,
+      });
+
+      return NextResponse.json({ success: true, paymentTx, paymentRef: payRef });
+    }
+
+    // =========================================================================
+    // CAS 1 : DÉPENSE STANDARD / SORTIE DE CAISSE (Jirama, Loyer, Achats, Autre, etc.)
     // =========================================================================
     if (!action || action === 'STANDARD_EXPENSE') {
       const {
         category,
+        customCategory,
         amount,
         beneficiary,
         paymentMethod,
@@ -636,6 +816,15 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Le montant de la dépense doit être supérieur à zéro.' }, { status: 400 });
       }
 
+      if (category === 'Autre' && (!customCategory || !String(customCategory).trim())) {
+        return NextResponse.json({ error: 'Veuillez préciser le libellé de la catégorie personnalisée (« Autre »).' }, { status: 400 });
+      }
+
+      const resolvedCategory =
+        category === 'Autre' && customCategory && String(customCategory).trim()
+          ? String(customCategory).trim()
+          : category || 'Charges d’exploitation';
+
       if (!description && !beneficiary) {
         return NextResponse.json({ error: 'Veuillez préciser le motif ou le bénéficiaire de la sortie.' }, { status: 400 });
       }
@@ -645,22 +834,25 @@ export async function POST(request: NextRequest) {
         where: { clinicId: session.clinicId, type: CashTransactionType.EXPENSE },
       });
       const currentYear = new Date().getFullYear();
-      const isDentistry = (category || '').toLowerCase().includes('dent');
+      const isDentistry = resolvedCategory.toLowerCase().includes('dent');
       const autoPrefix = isDentistry ? 'DEP-DENT' : 'DEP';
-      const autoRef = reference || `${autoPrefix}-${currentYear}-${String(count + 1).padStart(4, '0')}`;
+      const autoRef =
+        reference && String(reference).trim() && String(reference).trim() !== 'Néant'
+          ? String(reference).trim()
+          : `${autoPrefix}-${currentYear}-${String(count + 1).padStart(4, '0')}`;
 
       const operatorName = `${session.firstName} ${session.lastName}`;
-      const descFormatted = beneficiary
-        ? `${description || 'Sortie de caisse'} | Bénéficiaire : ${beneficiary} | Saisi par : ${operatorName}`
-        : `${description || 'Sortie de caisse'} | Saisi par : ${operatorName}`;
+      const cleanBeneficiary = beneficiary && String(beneficiary).trim() ? String(beneficiary).trim() : 'Néant';
+      const cleanDescription = description && String(description).trim() ? String(description).trim() : 'Sortie de caisse';
+      const descFormatted = `${cleanDescription} | Bénéficiaire : ${cleanBeneficiary} | Saisi par : ${operatorName}`.slice(0, 255);
 
-      const targetRegister = isReceptionist ? 'PETITE_CAISSE' : (cashRegister || 'PETITE_CAISSE');
+      const targetRegister = isReceptionist ? 'PETITE_CAISSE' : (cashRegister || 'GRANDE_CAISSE');
 
       const expenseTx = await prisma.cashTransaction.create({
         data: {
           clinicId: session.clinicId,
           type: CashTransactionType.EXPENSE,
-          category: category || 'Charges d’exploitation',
+          category: resolvedCategory,
           amount: numAmount,
           paymentMethod: (paymentMethod as PaymentMethod) || PaymentMethod.CASH,
           reference: autoRef,
@@ -1105,9 +1297,10 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
   }
 
-  const isAdmin = session.role === 'SUPER_ADMIN' || session.role === 'CLINIC_ADMIN';
-  if (!isAdmin) {
-    return NextResponse.json({ error: 'Seul un administrateur peut supprimer une écriture de caisse.' }, { status: 403 });
+  const isAdminOrAccountant =
+    session.role === 'SUPER_ADMIN' || session.role === 'CLINIC_ADMIN' || session.role === 'ACCOUNTANT';
+  if (!isAdminOrAccountant) {
+    return NextResponse.json({ error: 'Seule la direction ou la comptabilité peut supprimer une écriture de caisse.' }, { status: 403 });
   }
 
   try {

@@ -114,9 +114,9 @@ export function getRoleBadgeLabel(role: RoleType | undefined | null): { label: s
       };
     case 'ACCOUNTANT':
       return {
-        label: 'Comptable',
+        label: 'Comptable (Grande Caisse)',
         color: 'bg-rose-100 text-rose-800 border-rose-200',
-        description: 'Facturation, encaissements & rapports financiers',
+        description: 'Gestion Grande Caisse, Banque, transferts, dépenses, paie & consultations week-end',
       };
     default:
       return {

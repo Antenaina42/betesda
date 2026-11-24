@@ -209,6 +209,21 @@ export default function LoginPage() {
                 </div>
               </button>
 
+              {/* 3. Compte Comptable (Grande Caisse, Banque & Consultations Week-end) */}
+              <button
+                type="button"
+                onClick={() => handleQuickDemo('comptable@betesda.mg')}
+                className="w-full flex items-center gap-2.5 p-2.5 rounded-xl border border-rose-200 bg-rose-50/50 hover:bg-rose-100/60 hover:border-rose-300 transition-all text-left shadow-xs group"
+              >
+                <div className="w-8 h-8 rounded-lg bg-rose-100 text-rose-700 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                  <DollarSign className="w-4 h-4" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="font-bold text-slate-800">Comptable (Grande Caisse &amp; Banque)</div>
+                  <div className="text-[10px] text-rose-700 font-medium truncate">Transferts, Dépenses, Banque, Paie &amp; Consultations Week-end</div>
+                </div>
+              </button>
+
               <div className="grid grid-cols-2 gap-2">
                 {/* 2. Compte Administrateur */}
                 <button

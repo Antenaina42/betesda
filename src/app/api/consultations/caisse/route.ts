@@ -79,7 +79,14 @@ export async function POST(request: NextRequest) {
       reason, // Motif de visite
       vitals, // { temperature, systolicBP, diastolicBP, weight, height, heartRate, oxygenSaturation, bloodSugar, notes }
       isFreeConsultation, // Coche 0 Ar pour consultation gratuite
+      isWeekendConsultation, // Optionnel : forcer / désactiver l'imputation sur Budget Consultations Week-end
     } = body;
+
+    const nowDay = new Date().getDay();
+    const isWeekend =
+      isWeekendConsultation !== undefined
+        ? Boolean(isWeekendConsultation)
+        : nowDay === 0 || nowDay === 6;
 
     const parsedAmount = Math.max(0, parseFloat(amount || '0'));
     if (!parsedAmount && !isFreeConsultation) {
@@ -113,8 +120,8 @@ export async function POST(request: NextRequest) {
           lastName: newPatient.lastName.trim(),
           gender: newPatient.gender || 'MALE',
           birthDate: newPatient.birthDate ? new Date(newPatient.birthDate) : new Date(2000, 0, 1),
-          phone: newPatient.phone || '',
-          address: newPatient.address || null,
+          phone: newPatient.phone && String(newPatient.phone).trim() ? String(newPatient.phone).trim() : 'Néant',
+          address: newPatient.address && String(newPatient.address).trim() ? String(newPatient.address).trim() : 'Néant',
         },
       });
     } else {
@@ -257,13 +264,24 @@ export async function POST(request: NextRequest) {
         },
       });
 
-      // C. Inscription dans le journal de caisse (CashTransaction) - Petite Caisse Accueil
+      // C. Inscription dans le journal de caisse (CashTransaction)
+      // Si la consultation a lieu le week-end (Samedi/Dimanche), elle alimente le budget séparé CONSULTATION_WEEKEND
       const isInfirmerie = /soin|pansement|inject|perfus|infirm|bandage|suture/i.test(actsSummary);
+      const docDisplay = consultation.doctor
+        ? (consultation.doctor.firstName || consultation.doctor.lastName
+            ? `${consultation.doctor.title || 'Dr.'} ${consultation.doctor.firstName || ''} ${consultation.doctor.lastName || ''}`.trim()
+            : consultation.doctor.user
+            ? `Dr. ${consultation.doctor.user.firstName} ${consultation.doctor.user.lastName}`
+            : 'Médecin consultant')
+        : 'Médecin consultant';
       const incomeCategory = isFreeConsultation
         ? 'Consultation Gratuite (0 Ar)'
+        : isWeekend && !isInfirmerie
+        ? 'Consultation Week-end'
         : isInfirmerie
         ? 'Infirmerie'
         : 'Consultation';
+      const targetRegister = isWeekend && !isInfirmerie ? 'CONSULTATION_WEEKEND' : 'PETITE_CAISSE';
 
       const cashTx = await tx.cashTransaction.create({
         data: {
@@ -275,9 +293,11 @@ export async function POST(request: NextRequest) {
           reference: invoiceNumber,
           description: isFreeConsultation
             ? `Consultation Gratuite (0 Ar) prise en charge clinique - ${patientRecord.lastName} ${patientRecord.firstName} (${actsSummary})`
+            : isWeekend && !isInfirmerie
+            ? `[WEEK-END] Encaissement consultation ${invoiceNumber} - ${patientRecord.lastName} ${patientRecord.firstName} (${actsSummary}) | Médecin : ${docDisplay}`
             : `Encaissement ${incomeCategory.toLowerCase()} ${invoiceNumber} - ${patientRecord.lastName} ${patientRecord.firstName} (${actsSummary})`,
           performedById: session.id,
-          cashRegister: 'PETITE_CAISSE',
+          cashRegister: targetRegister,
         },
       });
 
@@ -319,7 +339,7 @@ export async function POST(request: NextRequest) {
         patientNumber: patientRecord.patientNumber,
         firstName: patientRecord.firstName,
         lastName: patientRecord.lastName,
-        phone: patientRecord.phone,
+        phone: patientRecord.phone && String(patientRecord.phone).trim() ? patientRecord.phone : 'Néant',
         age: patientAge,
         gender: patientRecord.gender,
       },

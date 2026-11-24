@@ -84,6 +84,12 @@ export function getStatusBadge(status: string): { label: string; className: stri
   }
 }
 
+export function formatOrNeant(value: string | null | undefined): string {
+  if (!value) return 'Néant';
+  const trimmed = String(value).trim();
+  return trimmed ? trimmed : 'Néant';
+}
+
 export function formatDoctorName(
   doc: {
     title?: string | null;

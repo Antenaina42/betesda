@@ -158,6 +158,12 @@ export default function ConsultationCaisseClient({
   // Coche Consultation Gratuite (0 Ar)
   const [isFreeConsultation, setIsFreeConsultation] = useState(false);
 
+  // Coche Consultation Week-end (auto-cochée Samedi / Dimanche pour imputation Budget Médecins Week-end)
+  const [isWeekendConsultation, setIsWeekendConsultation] = useState(() => {
+    const day = new Date().getDay();
+    return day === 0 || day === 6;
+  });
+
   // Total cumulé automatique des actes sélectionnés
   const computedTotal = useMemo(() => {
     return selectedActs.reduce((sum, item) => sum + item.price * item.quantity, 0);
@@ -437,10 +443,10 @@ export default function ConsultationCaisseClient({
         newPatient: {
           lastName,
           firstName,
-          phone: patientPhone.trim() || '',
+          phone: patientPhone.trim() || 'Néant',
           gender: patientGender,
         },
-        doctorId: null,
+        doctorId: selectedDoctorId || null,
         actName: finalActName,
         selectedActs: currentActs.map((a) => ({
           name: a.name,
@@ -449,11 +455,12 @@ export default function ConsultationCaisseClient({
         })),
         amount: isFreeConsultation ? 0 : finalAmount,
         isFreeConsultation,
+        isWeekendConsultation,
         paymentMethod,
-        paymentReference: paymentReference || null,
+        paymentReference: paymentReference.trim() || 'Néant',
         cashTendered: isFreeConsultation ? 0 : finalAmount,
         changeDue: null,
-        reason: reason || null,
+        reason: reason.trim() || null,
         vitals: showVitalsForm ? vitalsData : null,
       };
 
@@ -643,13 +650,13 @@ export default function ConsultationCaisseClient({
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Numéro de téléphone (optionnel)
+                    Numéro de téléphone (optionnel — Néant par défaut)
                   </label>
                   <input
                     type="tel"
                     value={patientPhone}
                     onChange={(e) => setPatientPhone(e.target.value)}
-                    placeholder="Ex: 034 00 000 00"
+                    placeholder="Néant (ou 034 00 000 00)"
                     className="w-full px-3.5 py-2.5 text-xs rounded-xl border border-slate-200 focus:outline-hidden focus:border-blue-500 bg-white shadow-xs"
                   />
                 </div>
@@ -1212,18 +1219,47 @@ export default function ConsultationCaisseClient({
                 </div>
               </div>
 
-              {/* Motif de visite */}
-              <div className="pt-1">
-                <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                  Motif de visite (Optionnel)
+              {/* Motif de visite + Option Consultation Week-end */}
+              <div className="pt-1 space-y-2.5">
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                    Motif de visite (Optionnel — Néant par défaut)
+                  </label>
+                  <input
+                    type="text"
+                    value={reason}
+                    onChange={(e) => setReason(e.target.value)}
+                    placeholder="Néant (ou ex: Fièvre, maux de tête, contrôle, bilan...)"
+                    className="w-full px-3 py-2 text-xs rounded-lg border border-slate-200 focus:outline-hidden focus:border-blue-500"
+                  />
+                </div>
+
+                {/* Coche Consultation Week-end (Budget dédié Paiement Médecins) */}
+                <label className={`flex items-center justify-between gap-2 p-2.5 rounded-xl border text-xs cursor-pointer transition-colors ${
+                  isWeekendConsultation
+                    ? 'bg-violet-50 border-violet-300 text-violet-900'
+                    : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100/70'
+                }`}>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={isWeekendConsultation}
+                      onChange={(e) => setIsWeekendConsultation(e.target.checked)}
+                      className="w-4 h-4 rounded text-violet-600 border-violet-300 focus:ring-violet-500"
+                    />
+                    <div>
+                      <span className="font-bold block">Consultation Week-end (Samedi / Dimanche)</span>
+                      <span className="text-[10px] text-slate-500">
+                        Impute automatiquement l'entrée sur le budget séparé « Consultations Week-end » (paiement médecins).
+                      </span>
+                    </div>
+                  </div>
+                  {isWeekendConsultation && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-violet-600 text-white shrink-0">
+                      WEEK-END
+                    </span>
+                  )}
                 </label>
-                <input
-                  type="text"
-                  value={reason}
-                  onChange={(e) => setReason(e.target.value)}
-                  placeholder="Ex: Fièvre, maux de tête, contrôle, bilan..."
-                  className="w-full px-3 py-2 text-xs rounded-lg border border-slate-200 focus:outline-hidden focus:border-blue-500"
-                />
               </div>
             </div>
 

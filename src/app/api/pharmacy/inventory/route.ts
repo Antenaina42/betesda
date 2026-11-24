@@ -146,7 +146,15 @@ export async function POST(request: NextRequest) {
         const difference = countedStock - theoreticalStock;
         const purchasePrice = med.purchasePrice;
         const financialImpact = difference * purchasePrice;
-        const reason = item.reason ? String(item.reason).trim() : null;
+        const baseReason = item.reason ? String(item.reason).trim() : (difference === 0 ? 'Conforme' : 'Écart constaté');
+        const remarkText = item.remark && String(item.remark).trim() ? String(item.remark).trim() : 'Néant';
+        const combinedReason =
+          remarkText && remarkText !== 'Néant'
+            ? `${baseReason} | Remarque : ${remarkText}`.slice(0, 250)
+            : difference !== 0
+            ? `${baseReason} | Remarque : Néant`.slice(0, 250)
+            : baseReason;
+        const reason = combinedReason;
 
         totalFinancialImpact += financialImpact;
         if (difference !== 0) {
@@ -206,7 +214,7 @@ export async function POST(request: NextRequest) {
           inventoryNumber,
           title: title.trim(),
           status: 'VALIDATED',
-          notes: notes ? String(notes).trim() : null,
+          notes: notes && String(notes).trim() ? String(notes).trim() : 'Néant',
           totalItemsCount: preparedItems.length,
           discrepancyCount,
           totalFinancialImpact,

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import {
@@ -164,6 +164,8 @@ interface ExpensesClientProps {
   initialDentalConsultations?: any[];
   initialDentalCashTransactions?: any[];
   staffMedicineSales?: any[];
+  doctors?: any[];
+  initialWeekendConsultations?: any[];
 }
 
 export function parseTransactionActors(exp: ExpenseTx) {
@@ -255,18 +257,35 @@ export default function ExpensesClient({
   initialDentalConsultations,
   initialDentalCashTransactions,
   staffMedicineSales = [],
+  doctors = [],
+  initialWeekendConsultations = [],
 }: ExpensesClientProps) {
   const searchParams = useSearchParams();
   const tabParam = searchParams?.get('tab');
 
-  const [activeTab, setActiveTab] = useState<'expenses' | 'payroll' | 'clinic-medicines' | 'dentistry'>(
-    tabParam === 'dentistry' || tabParam === 'dentist'
-      ? 'dentistry'
-      : tabParam === 'payroll'
-      ? 'payroll'
-      : tabParam === 'clinic-medicines'
-      ? 'clinic-medicines'
-      : 'expenses'
+  type ExpensesTab =
+    | 'expenses'
+    | 'transfers'
+    | 'bank'
+    | 'weekend-consultations'
+    | 'payroll'
+    | 'clinic-medicines'
+    | 'dentistry';
+
+  const resolveTabFromParam = (param: string | null | undefined, isRec: boolean): ExpensesTab => {
+    if (param === 'transfers') return 'transfers';
+    if (param === 'clinic-medicines') return 'clinic-medicines';
+    if (!isRec) {
+      if (param === 'bank') return 'bank';
+      if (param === 'weekend-consultations' || param === 'weekend') return 'weekend-consultations';
+      if (param === 'payroll') return 'payroll';
+      if (param === 'dentistry' || param === 'dentist') return 'dentistry';
+    }
+    return 'expenses';
+  };
+
+  const [activeTab, setActiveTab] = useState<ExpensesTab>(
+    resolveTabFromParam(tabParam, currentUser.role === 'RECEPTIONIST')
   );
   const [expenses, setExpenses] = useState<ExpenseTx[]>(initialExpenses);
   const [payrollSlips, setPayrollSlips] = useState<PayrollSlipItem[]>(initialPayrollSlips);
@@ -328,6 +347,11 @@ export default function ExpensesClient({
 
   // Filtre Caisse : Toutes, Petite Caisse, Grande Caisse, Banque
   const isReceptionist = currentUser.role === 'RECEPTIONIST';
+  const isAccountant = currentUser.role === 'ACCOUNTANT';
+  const isAdminOrAccountant =
+    currentUser.role === 'SUPER_ADMIN' ||
+    currentUser.role === 'CLINIC_ADMIN' ||
+    currentUser.role === 'ACCOUNTANT';
   const registerParam = searchParams?.get('register');
   const [registerFilter, setRegisterFilter] = useState<'ALL' | 'PETITE_CAISSE' | 'GRANDE_CAISSE' | 'BANQUE'>(
     isReceptionist || registerParam === 'PETITE_CAISSE'
@@ -339,12 +363,32 @@ export default function ExpensesClient({
       : 'ALL'
   );
 
+  // Synchronisation automatique lorsque l'utilisateur clique sur un lien du menu latéral (?tab=...&register=...)
+  useEffect(() => {
+    setActiveTab(resolveTabFromParam(tabParam, isReceptionist));
+    if (isReceptionist || registerParam === 'PETITE_CAISSE') {
+      setRegisterFilter('PETITE_CAISSE');
+    } else if (registerParam === 'GRANDE_CAISSE') {
+      setRegisterFilter('GRANDE_CAISSE');
+    } else if (registerParam === 'BANQUE') {
+      setRegisterFilter('BANQUE');
+    } else if (tabParam === 'bank') {
+      setRegisterFilter('BANQUE');
+    } else {
+      setRegisterFilter('ALL');
+    }
+  }, [tabParam, registerParam, isReceptionist]);
+
+  // Sous-filtre dans l'onglet Dépenses : Dépenses seules vs Toutes opérations
+  const [expenseTypeView, setExpenseTypeView] = useState<'EXPENSE_ONLY' | 'ALL_OPS'>('EXPENSE_ONLY');
+
   // =========================================================================
   // 1. MODAL SORTIE DE CAISSE STANDARD (DÉCAISSEMENT)
   // =========================================================================
   const [showExpenseModal, setShowExpenseModal] = useState(false);
   const [expenseForm, setExpenseForm] = useState({
     category: 'Charges & Fonctionnement',
+    customCategory: '',
     amount: '',
     beneficiary: '',
     paymentMethod: 'CASH',
@@ -353,10 +397,38 @@ export default function ExpensesClient({
     transactionDate: new Date().toISOString().split('T')[0],
     attachmentUrl: '',
     attachmentName: '',
-    cashRegister: isReceptionist ? 'PETITE_CAISSE' : 'PETITE_CAISSE',
+    cashRegister: isReceptionist ? 'PETITE_CAISSE' : 'GRANDE_CAISSE',
   });
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
   const [uploadAttachmentError, setUploadAttachmentError] = useState('');
+
+  // =========================================================================
+  // 1e. MODALS CONSULTATIONS WEEK-END (ENTRÉE & PAIEMENT HONORAIRES MÉDECINS)
+  // =========================================================================
+  const [showWeekendIncomeModal, setShowWeekendIncomeModal] = useState(false);
+  const [weekendIncomeForm, setWeekendIncomeForm] = useState({
+    amount: '',
+    patientName: '',
+    doctorName: '',
+    actName: 'Consultation Week-end',
+    paymentMethod: 'CASH',
+    transactionDate: new Date().toISOString().split('T')[0],
+    notes: '',
+  });
+
+  const [showWeekendDoctorPayModal, setShowWeekendDoctorPayModal] = useState(false);
+  const [weekendDoctorPayForm, setWeekendDoctorPayForm] = useState({
+    selectedDoctorOption: '',
+    customDoctorName: '',
+    amount: '',
+    paymentMethod: 'CASH',
+    transactionDate: new Date().toISOString().split('T')[0],
+    weekendPeriod: `Week-end du ${new Date().toLocaleDateString('fr-FR')}`,
+    notes: '',
+  });
+  const [weekendMonthFilter, setWeekendMonthFilter] = useState('ALL');
+  const [weekendDoctorFilter, setWeekendDoctorFilter] = useState('ALL');
+  const [printedWeekendPayment, setPrintedWeekendPayment] = useState<ExpenseTx | null>(null);
 
   // =========================================================================
   // 1b. MODAL TRANSFERTS INTER-COMPTES (PETITE CAISSE, GRANDE CAISSE, BANQUE)
@@ -632,13 +704,240 @@ export default function ExpensesClient({
     }, 0);
   }, [dentalRequisitions]);
 
-  // Filtrage avancé et dynamique des dépenses
+  // Helper : déterminer si une transaction est un transfert inter-comptes
+  const isTransferTx = (e: ExpenseTx) => {
+    const cat = (e.category || '').toLowerCase();
+    const ref = e.reference || '';
+    return (
+      ref.startsWith('VERS-') ||
+      ref.startsWith('DEP-BQ-') ||
+      ref.startsWith('RET-BQ-') ||
+      cat.includes('versement') ||
+      cat.includes('dépôt bancaire') ||
+      cat.includes('retrait bancaire') ||
+      cat.includes('approvisionnement depuis banque')
+    );
+  };
+
+  // Liste dédiée des transferts (Onglet Transferts / Versements)
+  const transferTransactionsList = useMemo(() => {
+    if (isReceptionist) {
+      return cashTransfersOut;
+    }
+    // Pour Comptable/Admin : 1 ligne claire par référence de transfert (on privilégie la ligne sortante EXPENSE)
+    const allTransfers = expenses.filter((e) => isTransferTx(e));
+    const seenRefs = new Set<string>();
+    const unique: ExpenseTx[] = [];
+    // Préférer EXPENSE pour chaque référence jumelée
+    const sorted = [...allTransfers].sort((a, b) => {
+      const timeDiff = new Date(b.transactionDate).getTime() - new Date(a.transactionDate).getTime();
+      if (timeDiff !== 0) return timeDiff;
+      return a.type === 'EXPENSE' ? -1 : 1;
+    });
+    for (const tx of sorted) {
+      if (tx.reference && (tx.reference.startsWith('VERS-') || tx.reference.startsWith('DEP-BQ-') || tx.reference.startsWith('RET-BQ-'))) {
+        if (seenRefs.has(tx.reference)) continue;
+        seenRefs.add(tx.reference);
+      }
+      unique.push(tx);
+    }
+    return unique;
+  }, [expenses, cashTransfersOut, isReceptionist]);
+
+  // Liste dédiée des mouvements bancaires (Onglet Mouvements Banque)
+  const bankTransactionsList = useMemo(() => {
+    return expenses
+      .filter((e) => e.cashRegister === 'BANQUE')
+      .sort((a, b) => new Date(b.transactionDate).getTime() - new Date(a.transactionDate).getTime());
+  }, [expenses]);
+
+  // Liste formatée des médecins disponibles pour les paiements Consultations Week-end
+  const doctorOptions = useMemo(() => {
+    return (doctors || []).map((d: any) => {
+      const fullName =
+        d.firstName || d.lastName
+          ? `${d.title || 'Dr.'} ${d.firstName || ''} ${d.lastName || ''}`.trim()
+          : d.user
+          ? `Dr. ${d.user.firstName} ${d.user.lastName}`.trim()
+          : 'Médecin consultant';
+      const spec = d.specialty?.name || d.specialtyName || 'Médecine Générale';
+      return {
+        id: d.id,
+        name: fullName,
+        specialty: spec,
+        label: `${fullName} (${spec})`,
+      };
+    });
+  }, [doctors]);
+
+  // =========================================================================
+  // GESTION À PART : BUDGET CONSULTATIONS WEEK-END & PAIEMENTS MÉDECINS
+  // =========================================================================
+  const weekendDirectIncomes = useMemo(() => {
+    return expenses.filter(
+      (e) => e.cashRegister === 'CONSULTATION_WEEKEND' && e.type === 'INCOME'
+    );
+  }, [expenses]);
+
+  const weekendDoctorPayments = useMemo(() => {
+    return expenses
+      .filter((e) => e.cashRegister === 'CONSULTATION_WEEKEND' && e.type === 'EXPENSE')
+      .sort((a, b) => new Date(b.transactionDate).getTime() - new Date(a.transactionDate).getTime());
+  }, [expenses]);
+
+  const allWeekendEntries = useMemo(() => {
+    type WeekendEntry = {
+      id: string;
+      date: string;
+      dayLabel: string;
+      monthKey: string;
+      ref: string;
+      patientName: string;
+      doctorName: string;
+      actName: string;
+      amount: number;
+      paymentMethod: string;
+      operatorName: string;
+      source: 'TX' | 'CONSULTATION';
+      rawTx?: ExpenseTx;
+    };
+
+    const dayNames = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
+    const txRefs = new Set(weekendDirectIncomes.map((t) => t.reference).filter(Boolean));
+    const list: WeekendEntry[] = [];
+
+    weekendDirectIncomes.forEach((tx) => {
+      const d = new Date(tx.transactionDate);
+      const desc = tx.description || '';
+      const docMatch = desc.match(/Médecin\s*:\s*([^|]+)/i);
+      const patMatch = desc.match(/Patient\s*:\s*([^|]+)/i) || desc.match(/-\s*([^(|]+)\s*\(/);
+      const actMatch = desc.match(/Acte\s*:\s*([^|]+)/i) || desc.match(/\(([^)]+)\)/);
+      list.push({
+        id: `tx-${tx.id}`,
+        date: String(tx.transactionDate),
+        dayLabel: dayNames[d.getDay()] || 'Week-end',
+        monthKey: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`,
+        ref: tx.reference || 'CONS-WE',
+        patientName: patMatch ? patMatch[1].trim() : 'Néant',
+        doctorName: docMatch ? docMatch[1].trim() : 'Médecin de garde',
+        actName: actMatch ? actMatch[1].trim() : tx.category || 'Consultation Week-end',
+        amount: tx.amount,
+        paymentMethod: tx.paymentMethod || 'CASH',
+        operatorName: tx.performedBy ? `${tx.performedBy.firstName} ${tx.performedBy.lastName}` : 'Caisse',
+        source: 'TX',
+        rawTx: tx,
+      });
+    });
+
+    (initialWeekendConsultations || []).forEach((c: any) => {
+      const invRef = c.invoice?.invoiceNumber;
+      if (invRef && txRefs.has(invRef)) return;
+      const amt = Number(c.invoice?.paidAmount ?? c.invoice?.totalAmount ?? 0);
+      if (amt <= 0) return;
+      const d = new Date(c.consultationDate);
+      const docName = c.doctor
+        ? c.doctor.firstName || c.doctor.lastName
+          ? `${c.doctor.title || 'Dr.'} ${c.doctor.firstName || ''} ${c.doctor.lastName || ''}`.trim()
+          : c.doctor.user
+          ? `Dr. ${c.doctor.user.firstName} ${c.doctor.user.lastName}`.trim()
+          : 'Médecin consultant'
+        : 'Médecin consultant';
+      list.push({
+        id: `cons-${c.id}`,
+        date: String(c.consultationDate),
+        dayLabel: dayNames[d.getDay()] || 'Week-end',
+        monthKey: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`,
+        ref: invRef || 'FAC-CONS',
+        patientName: c.patient ? `${c.patient.lastName} ${c.patient.firstName}`.trim() : 'Néant',
+        doctorName: docName,
+        actName: c.reason || 'Consultation Week-end',
+        amount: amt,
+        paymentMethod: c.invoice?.payments?.[0]?.paymentMethod || 'CASH',
+        operatorName: 'Caisse Consultation',
+        source: 'CONSULTATION',
+      });
+    });
+
+    return list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [weekendDirectIncomes, initialWeekendConsultations]);
+
+  const totalWeekendIncome = useMemo(() => {
+    return allWeekendEntries.reduce((sum, e) => sum + e.amount, 0);
+  }, [allWeekendEntries]);
+
+  const totalWeekendPaidDoctors = useMemo(() => {
+    return weekendDoctorPayments.reduce((sum, p) => sum + p.amount, 0);
+  }, [weekendDoctorPayments]);
+
+  const soldeDisponibleWeekend = useMemo(() => {
+    return Math.max(0, totalWeekendIncome - totalWeekendPaidDoctors);
+  }, [totalWeekendIncome, totalWeekendPaidDoctors]);
+
+  const filteredWeekendEntries = useMemo(() => {
+    return allWeekendEntries.filter((e) => {
+      if (weekendMonthFilter !== 'ALL' && e.monthKey !== weekendMonthFilter) return false;
+      if (weekendDoctorFilter !== 'ALL' && !e.doctorName.toLowerCase().includes(weekendDoctorFilter.toLowerCase())) return false;
+      return true;
+    });
+  }, [allWeekendEntries, weekendMonthFilter, weekendDoctorFilter]);
+
+  const filteredWeekendDoctorPayments = useMemo(() => {
+    return weekendDoctorPayments.filter((p) => {
+      const d = new Date(p.transactionDate);
+      const mKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      if (weekendMonthFilter !== 'ALL' && mKey !== weekendMonthFilter) return false;
+      if (weekendDoctorFilter !== 'ALL' && !(p.description || '').toLowerCase().includes(weekendDoctorFilter.toLowerCase())) return false;
+      return true;
+    });
+  }, [weekendDoctorPayments, weekendMonthFilter, weekendDoctorFilter]);
+
+  const weekendAvailableMonths = useMemo(() => {
+    const set = new Set<string>();
+    allWeekendEntries.forEach((e) => set.add(e.monthKey));
+    weekendDoctorPayments.forEach((p) => {
+      const d = new Date(p.transactionDate);
+      set.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+    });
+    return Array.from(set).sort().reverse();
+  }, [allWeekendEntries, weekendDoctorPayments]);
+
+  // Catégories disponibles dynamiquement (inclut les catégories personnalisées "Autre")
+  const availableExpenseCategories = useMemo(() => {
+    const defaults = [
+      'Salaires & Paie',
+      'Dépense Clinique (Pharmacie)',
+      'Charges & Fonctionnement',
+      'Achats & Fournitures',
+      'Maintenance & Équipements',
+      'Transport & Déplacements',
+      'Primes & Avances Personnel',
+      'Divers & Urgences',
+    ];
+    const set = new Set<string>(defaults);
+    expenses.forEach((e) => {
+      if (e.category && !isTransferTx(e) && e.cashRegister !== 'CONSULTATION_WEEKEND') {
+        set.add(e.category);
+      }
+    });
+    return Array.from(set);
+  }, [expenses]);
+
+  // Filtrage avancé et dynamique des dépenses (Onglet 1 : Dépenses, séparé des Transferts et du Budget Week-end)
   const filteredExpenses = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
     const now = new Date();
 
     return expenses
       .filter((e) => {
+        // Exclure le budget Consultations Week-end (onglet dédié)
+        if (e.cashRegister === 'CONSULTATION_WEEKEND') return false;
+
+        // Exclure les transferts inter-caisses de l'onglet Dépenses (ils ont leur onglet dédié Transferts / Versements)
+        if (isTransferTx(e)) return false;
+
+        // Pour l'onglet Dépenses : filtrer par Dépenses seules ou Toutes opérations selon le choix
+        if (expenseTypeView === 'EXPENSE_ONLY' && e.type !== 'EXPENSE') return false;
+
         // 0. Caisse (Cloisonnement strict : l'Accueil ne voit QUE la Petite Caisse)
         if (isReceptionist) {
           const reg = e.cashRegister || 'PETITE_CAISSE';
@@ -717,6 +1016,8 @@ export default function ExpensesClient({
       });
   }, [
     expenses,
+    expenseTypeView,
+    isReceptionist,
     registerFilter,
     categoryFilter,
     paymentMethodFilter,
@@ -798,7 +1099,7 @@ export default function ExpensesClient({
       firstName: emp.firstName,
       lastName: emp.lastName,
       fullName: `${emp.lastName.toUpperCase()} ${emp.firstName}`,
-      phone: emp.phone || 'Non renseigné',
+      phone: emp.phone || 'Néant',
       position: emp.position || 'Salarié',
       baseSalary: emp.baseSalary || 0,
       email: null,
@@ -822,7 +1123,7 @@ export default function ExpensesClient({
           firstName: usr.firstName,
           lastName: usr.lastName,
           fullName: `${usr.lastName.toUpperCase()} ${usr.firstName}`,
-          phone: usr.phone || 'Non renseigné',
+          phone: usr.phone || 'Néant',
           position: usr.doctorProfile?.specialtyName || usr.role.displayName,
           baseSalary: defSal,
           email: usr.email,
@@ -866,7 +1167,7 @@ export default function ExpensesClient({
       firstName: staff.firstName,
       lastName: staff.lastName,
       fullName: `${staff.lastName.toUpperCase()} ${staff.firstName}`,
-      phone: staff.phone || 'Non renseigné',
+      phone: staff.phone || 'Néant',
       position: staff.doctorProfile?.specialtyName || staff.role.displayName,
       baseSalary: parseFloat(getDefaultSalaryByRole(staff.role.name)) || 0,
       email: staff.email,
@@ -971,6 +1272,12 @@ export default function ExpensesClient({
   const handleSubmitStandardExpense = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+
+    if (expenseForm.category === 'Autre' && !expenseForm.customCategory.trim()) {
+      setError('Veuillez préciser le nom de votre catégorie personnalisée.');
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -980,6 +1287,8 @@ export default function ExpensesClient({
         body: JSON.stringify({
           action: 'STANDARD_EXPENSE',
           ...expenseForm,
+          beneficiary: expenseForm.beneficiary.trim() || 'Néant',
+          reference: expenseForm.reference.trim() || '',
         }),
       });
 
@@ -995,6 +1304,7 @@ export default function ExpensesClient({
       // Reset
       setExpenseForm({
         category: 'Charges & Fonctionnement',
+        customCategory: '',
         amount: '',
         beneficiary: '',
         paymentMethod: 'CASH',
@@ -1003,11 +1313,127 @@ export default function ExpensesClient({
         transactionDate: new Date().toISOString().split('T')[0],
         attachmentUrl: '',
         attachmentName: '',
-        cashRegister: currentUser.role === 'RECEPTIONIST' ? 'PETITE_CAISSE' : 'PETITE_CAISSE',
+        cashRegister: currentUser.role === 'RECEPTIONIST' ? 'PETITE_CAISSE' : 'GRANDE_CAISSE',
       });
       setUploadAttachmentError('');
     } catch (err: any) {
       setError(err.message || 'Erreur réseau');
+      setLoading(false);
+    }
+  };
+
+  // =========================================================================
+  // SOUMISSION ENTRÉE CONSULTATION WEEK-END (SAMEDI / DIMANCHE)
+  // =========================================================================
+  const handleSubmitWeekendIncome = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    const numAmount = parseFloat(weekendIncomeForm.amount);
+    if (!numAmount || numAmount <= 0) {
+      setError('Veuillez saisir un montant valide supérieur à 0 Ar.');
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch('/api/expenses', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'WEEKEND_CONSULTATION_INCOME',
+          amount: numAmount,
+          patientName: weekendIncomeForm.patientName.trim() || 'Néant',
+          doctorName: weekendIncomeForm.doctorName.trim() || 'Médecin de garde',
+          actName: weekendIncomeForm.actName.trim() || 'Consultation Week-end',
+          paymentMethod: weekendIncomeForm.paymentMethod,
+          transactionDate: weekendIncomeForm.transactionDate,
+          notes: weekendIncomeForm.notes.trim() || 'Néant',
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Erreur enregistrement consultation week-end');
+
+      setExpenses([data.transaction, ...expenses]);
+      setShowWeekendIncomeModal(false);
+      setSuccessMsg(`✓ Entrée Consultation Week-end de ${formatCurrency(numAmount)} ajoutée au budget week-end !`);
+      setTimeout(() => setSuccessMsg(''), 5000);
+      setWeekendIncomeForm({
+        amount: '',
+        patientName: '',
+        doctorName: '',
+        actName: 'Consultation Week-end',
+        paymentMethod: 'CASH',
+        transactionDate: new Date().toISOString().split('T')[0],
+        notes: '',
+      });
+    } catch (err: any) {
+      setError(err.message || 'Erreur réseau');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // =========================================================================
+  // SOUMISSION PAIEMENT MÉDECIN AVEC L'ARGENT DES CONSULTATIONS WEEK-END
+  // =========================================================================
+  const handleSubmitWeekendDoctorPayment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    const numAmount = parseFloat(weekendDoctorPayForm.amount);
+    const chosenDoctor =
+      weekendDoctorPayForm.selectedDoctorOption === 'CUSTOM'
+        ? weekendDoctorPayForm.customDoctorName.trim()
+        : weekendDoctorPayForm.selectedDoctorOption.trim();
+
+    if (!chosenDoctor) {
+      setError('Veuillez sélectionner ou préciser le nom du médecin bénéficiaire.');
+      return;
+    }
+    if (!numAmount || numAmount <= 0) {
+      setError('Veuillez saisir un montant supérieur à 0 Ar.');
+      return;
+    }
+    if (numAmount > soldeDisponibleWeekend) {
+      setError(
+        `Le paiement (${formatCurrency(numAmount)}) dépasse le budget disponible des consultations week-end (${formatCurrency(soldeDisponibleWeekend)}).`
+      );
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await fetch('/api/expenses', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'WEEKEND_DOCTOR_PAYMENT',
+          doctorName: chosenDoctor,
+          amount: numAmount,
+          paymentMethod: weekendDoctorPayForm.paymentMethod,
+          transactionDate: weekendDoctorPayForm.transactionDate,
+          weekendPeriod: weekendDoctorPayForm.weekendPeriod.trim() || 'Week-end',
+          notes: weekendDoctorPayForm.notes.trim() || 'Néant',
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Erreur paiement médecin week-end');
+
+      setExpenses([data.paymentTx, ...expenses]);
+      setShowWeekendDoctorPayModal(false);
+      setPrintedWeekendPayment(data.paymentTx);
+      setSuccessMsg(`✓ Paiement de ${formatCurrency(numAmount)} versé à ${chosenDoctor} sur le budget Consultations Week-end !`);
+      setTimeout(() => setSuccessMsg(''), 6000);
+      setWeekendDoctorPayForm({
+        selectedDoctorOption: '',
+        customDoctorName: '',
+        amount: '',
+        paymentMethod: 'CASH',
+        transactionDate: new Date().toISOString().split('T')[0],
+        weekendPeriod: `Week-end du ${new Date().toLocaleDateString('fr-FR')}`,
+        notes: '',
+      });
+    } catch (err: any) {
+      setError(err.message || 'Erreur réseau');
+    } finally {
       setLoading(false);
     }
   };
@@ -1476,14 +1902,24 @@ export default function ExpensesClient({
             <span className="text-slate-600 font-medium">Administration Clinique</span>
             <span>/</span>
             <span className="text-blue-600 font-semibold">
-              {isReceptionist ? 'Dépenses Petite Caisse' : 'Gestion Solde'}
+              {isReceptionist
+                ? activeTab === 'transfers'
+                  ? 'Versements vers Grande Caisse'
+                  : 'Dépenses Petite Caisse'
+                : isAccountant
+                ? 'Comptabilité & Grande Caisse'
+                : 'Gestion Solde'}
             </span>
           </div>
           <h1 className="text-2xl font-extrabold text-slate-900 mt-1 tracking-tight flex items-center gap-2.5">
             <ArrowDownRight className="w-6 h-6 text-rose-600" />
             <span>
               {isReceptionist
-                ? 'Gestion Petite Caisse & Dépenses Accueil'
+                ? activeTab === 'transfers'
+                  ? 'Versements Petite Caisse ➔ Grande Caisse'
+                  : 'Gestion Petite Caisse & Dépenses Accueil'
+                : isAccountant
+                ? 'Compte Comptable — Grande Caisse, Banque & Consultations Week-end'
                 : 'Gestion Solde, Dépenses, Paie & Trésorerie'}
             </span>
           </h1>
@@ -1551,10 +1987,14 @@ export default function ExpensesClient({
               <span className={`px-2 py-0.5 rounded-full text-[10px] font-black border ${
                 currentUser.role === 'RECEPTIONIST'
                   ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                  : currentUser.role === 'ACCOUNTANT'
+                  ? 'bg-rose-500/20 text-rose-200 border-rose-400/40'
                   : 'bg-blue-500/20 text-blue-300 border-blue-500/40'
               }`}>
                 {currentUser.role === 'RECEPTIONIST'
                   ? '👤 Compte Accueil • Gestion Petite Caisse'
+                  : currentUser.role === 'ACCOUNTANT'
+                  ? '📊 Compte Comptable • Gestion Grande Caisse, Banque & Consultations Week-end'
                   : currentUser.role === 'SUPER_ADMIN'
                   ? '👑 Super Administrateur • Gestion Grande Caisse & Banque'
                   : currentUser.role === 'CLINIC_ADMIN'
@@ -1793,12 +2233,12 @@ export default function ExpensesClient({
         </div>
       )}
 
-      {/* Onglets Principaux */}
-      <div className="flex rounded-xl bg-slate-200/80 p-1 text-xs font-bold w-fit">
+      {/* Onglets Principaux Séparés */}
+      <div className="flex flex-wrap gap-1 rounded-xl bg-slate-200/80 p-1 text-xs font-bold w-fit">
         <button
           type="button"
           onClick={() => setActiveTab('expenses')}
-          className={`px-4 py-2 rounded-lg transition-all flex items-center gap-2 ${
+          className={`px-3.5 py-2 rounded-lg transition-all flex items-center gap-2 cursor-pointer ${
             activeTab === 'expenses'
               ? 'bg-white text-slate-900 shadow-xs'
               : 'text-slate-600 hover:text-slate-900'
@@ -1806,33 +2246,87 @@ export default function ExpensesClient({
         >
           <ArrowDownRight className="w-4 h-4 text-rose-600" />
           <span>
-            {currentUser.role === 'RECEPTIONIST'
-              ? `Dépenses Petite Caisse & Versements (${expenses.length})`
-              : `Journal des Dépenses & Décaissements (${expenses.length})`}
+            {isReceptionist
+              ? `Dépenses Petite Caisse (${filteredExpenses.length})`
+              : `Dépenses (${filteredExpenses.length})`}
           </span>
         </button>
 
-        {currentUser.role !== 'RECEPTIONIST' && (
-          <button
-            type="button"
-            onClick={() => setActiveTab('payroll')}
-            className={`px-4 py-2 rounded-lg transition-all flex items-center gap-2 ${
-              activeTab === 'payroll'
-                ? 'bg-purple-600 text-white shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <Users className="w-4 h-4" />
-            <span>Fiches de Paie &amp; Personnel ({allEmployees.length} employés)</span>
-          </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('transfers')}
+          className={`px-3.5 py-2 rounded-lg transition-all flex items-center gap-2 cursor-pointer ${
+            activeTab === 'transfers'
+              ? 'bg-emerald-600 text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <ArrowRightLeft className="w-4 h-4" />
+          <span>
+            {isReceptionist
+              ? `Versements vers Grande Caisse (${transferTransactionsList.length})`
+              : `Transferts (${transferTransactionsList.length})`}
+          </span>
+        </button>
+
+        {!isReceptionist && (
+          <>
+            <button
+              type="button"
+              onClick={() => setActiveTab('bank')}
+              className={`px-3.5 py-2 rounded-lg transition-all flex items-center gap-2 cursor-pointer ${
+                activeTab === 'bank'
+                  ? 'bg-indigo-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Landmark className="w-4 h-4" />
+              <span>Mouvements Banque ({bankTransactionsList.length})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('weekend-consultations')}
+              className={`px-3.5 py-2 rounded-lg transition-all flex items-center gap-2 cursor-pointer ${
+                activeTab === 'weekend-consultations'
+                  ? 'bg-violet-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Calendar className="w-4 h-4" />
+              <span>Consultations Week-end</span>
+              <span
+                className={`px-1.5 py-0.5 rounded-full text-[10px] font-black ${
+                  activeTab === 'weekend-consultations'
+                    ? 'bg-white/20 text-white'
+                    : 'bg-violet-100 text-violet-800'
+                }`}
+              >
+                {formatCurrency(soldeDisponibleWeekend)}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('payroll')}
+              className={`px-3.5 py-2 rounded-lg transition-all flex items-center gap-2 cursor-pointer ${
+                activeTab === 'payroll'
+                  ? 'bg-purple-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Users className="w-4 h-4" />
+              <span>Fiches de Paie ({allEmployees.length})</span>
+            </button>
+          </>
         )}
 
         <button
           type="button"
           onClick={() => setActiveTab('clinic-medicines')}
-          className={`px-4 py-2 rounded-lg transition-all flex items-center gap-2 ${
+          className={`px-3.5 py-2 rounded-lg transition-all flex items-center gap-2 cursor-pointer ${
             activeTab === 'clinic-medicines'
-              ? 'bg-indigo-600 text-white shadow-xs'
+              ? 'bg-slate-900 text-white shadow-xs'
               : 'text-slate-600 hover:text-slate-900'
           }`}
         >
@@ -1906,6 +2400,37 @@ export default function ExpensesClient({
                 </div>
               </div>
             )}
+
+            {/* Sélecteur Type d'affichage Dépenses Seules vs Toutes opérations (hors transferts) */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-1">
+              <div className="flex items-center gap-1.5 bg-white p-1 rounded-lg border border-slate-200 text-[11px] font-bold">
+                <button
+                  type="button"
+                  onClick={() => setExpenseTypeView('EXPENSE_ONLY')}
+                  className={`px-3 py-1 rounded-md transition-colors cursor-pointer ${
+                    expenseTypeView === 'EXPENSE_ONLY'
+                      ? 'bg-rose-600 text-white shadow-2xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Dépenses uniquement
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setExpenseTypeView('ALL_OPS')}
+                  className={`px-3 py-1 rounded-md transition-colors cursor-pointer ${
+                    expenseTypeView === 'ALL_OPS'
+                      ? 'bg-slate-900 text-white shadow-2xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Dépenses + Recettes caisse
+                </button>
+              </div>
+              <span className="text-[11px] text-slate-500">
+                Les transferts inter-caisses et mouvements bancaires disposent désormais de leurs onglets dédiés.
+              </span>
+            </div>
 
             {/* Ligne 1 : Recherche + Périodes Rapides */}
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
@@ -1988,14 +2513,11 @@ export default function ExpensesClient({
                   className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-800"
                 >
                   <option value="ALL">Toutes les catégories</option>
-                  <option value="Salaires & Paie">Salaires &amp; Paie</option>
-                  <option value="Dépense Clinique (Pharmacie)">Prélèvement Pharmacie</option>
-                  <option value="Charges & Fonctionnement">Charges &amp; Fonctionnement</option>
-                  <option value="Achats & Fournitures">Achats &amp; Fournitures</option>
-                  <option value="Maintenance & Équipements">Maintenance &amp; Équipements</option>
-                  <option value="Transport & Déplacements">Transport &amp; Déplacements</option>
-                  <option value="Primes & Avances Personnel">Primes &amp; Avances Personnel</option>
-                  <option value="Divers & Urgences">Divers &amp; Urgences</option>
+                  {availableExpenseCategories.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat}
+                    </option>
+                  ))}
                 </select>
               </div>
 
@@ -2288,6 +2810,661 @@ export default function ExpensesClient({
                 )}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* ONGLET 1b : TRANSFERTS & VERSEMENTS INTER-CAISSES                         */}
+      {/* ========================================================================= */}
+      {activeTab === 'transfers' && (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden space-y-5 p-5">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+            <div>
+              <h3 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
+                <ArrowRightLeft className="w-5 h-5 text-emerald-600" />
+                <span>
+                  {isReceptionist
+                    ? 'Suivi des Versements Petite Caisse ➔ Grande Caisse'
+                    : 'Journal Dédié des Transferts (Petite Caisse / Grande Caisse / Banque)'}
+                </span>
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                {isReceptionist
+                  ? 'Historique séparé de vos versements remis à la Grande Caisse avec bordereaux A4 certifiés.'
+                  : 'Suivi clair et isolé de tous les mouvements de fonds entre la Petite Caisse, la Grande Caisse et la Banque.'}
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setError('');
+                  setTransferType('PETITE_CAISSE_TO_GRANDE_CAISSE');
+                  setShowTransferModal(true);
+                }}
+                disabled={soldeDisponiblePetiteCaisse <= 0}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-black text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed shadow-xs cursor-pointer"
+              >
+                <Wallet className="w-4 h-4" />
+                <span>Petite Caisse ➔ Grande Caisse</span>
+              </button>
+
+              {!isReceptionist && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setError('');
+                      setTransferType('GRANDE_CAISSE_TO_BANQUE');
+                      setTransferForm((prev) => ({
+                        ...prev,
+                        senderName: `${currentUser.firstName} ${currentUser.lastName}`.trim(),
+                        receiverName: bankSettings.bankName || 'Banque',
+                        notes: "Dépôt bancaire des espèces du coffre Grande Caisse",
+                      }));
+                      setShowTransferModal(true);
+                    }}
+                    disabled={soldeDisponibleGrandeCaisse <= 0}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-black text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed shadow-xs cursor-pointer"
+                  >
+                    <Landmark className="w-4 h-4" />
+                    <span>Grande Caisse ➔ Banque</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setError('');
+                      setTransferType('BANQUE_TO_GRANDE_CAISSE');
+                      setTransferForm((prev) => ({
+                        ...prev,
+                        senderName: bankSettings.bankName || 'Banque',
+                        receiverName: `${currentUser.firstName} ${currentUser.lastName}`.trim(),
+                        notes: 'Retrait bancaire pour approvisionnement du coffre Grande Caisse',
+                      }));
+                      setShowTransferModal(true);
+                    }}
+                    disabled={soldeDisponibleBanque <= 0}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-black text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed shadow-xs cursor-pointer"
+                  >
+                    <ArrowRightLeft className="w-4 h-4" />
+                    <span>Banque ➔ Grande Caisse</span>
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+
+          <div className="overflow-x-auto border border-slate-100 rounded-xl">
+            <table className="w-full text-xs text-left">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-bold text-[10px] tracking-wider">
+                  <th className="py-3 px-4">Date &amp; Réf.</th>
+                  <th className="py-3 px-4">Type de Mouvement</th>
+                  <th className="py-3 px-4">Acteurs &amp; Opérateur</th>
+                  <th className="py-3 px-4">Détail / Motif</th>
+                  <th className="py-3 px-4 text-right">Montant</th>
+                  <th className="py-3 px-4 text-center">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {transferTransactionsList.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="py-10 text-center text-slate-400">
+                      Aucun transfert ou versement enregistré pour le moment.
+                    </td>
+                  </tr>
+                ) : (
+                  transferTransactionsList.map((tx) => {
+                    const actors = parseTransactionActors(tx);
+                    const isDepBq = tx.reference?.startsWith('DEP-BQ');
+                    const isRetBq = tx.reference?.startsWith('RET-BQ');
+                    const routeBadge = isDepBq
+                      ? { label: 'Grande Caisse ➔ Banque', cls: 'bg-blue-50 text-blue-700 border-blue-200' }
+                      : isRetBq
+                      ? { label: 'Banque ➔ Grande Caisse', cls: 'bg-indigo-50 text-indigo-700 border-indigo-200' }
+                      : { label: 'Petite Caisse ➔ Grande Caisse', cls: 'bg-emerald-50 text-emerald-800 border-emerald-200' };
+
+                    return (
+                      <tr key={tx.id} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="py-3 px-4 whitespace-nowrap">
+                          <div className="font-bold text-slate-900">{formatDate(tx.transactionDate)}</div>
+                          <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-700">
+                            {tx.reference || 'VERS'}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4">
+                          <span className={`inline-block px-2.5 py-1 rounded-lg text-[10px] font-extrabold border ${routeBadge.cls}`}>
+                            {routeBadge.label}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4">
+                          <div className="font-bold text-slate-900 text-[11px]">Saisi par : {actors.operator}</div>
+                          {actors.primaryActor && (
+                            <div className="text-[11px] text-slate-600">{actors.primaryActor}</div>
+                          )}
+                          {actors.secondaryActor && (
+                            <div className="text-[11px] text-slate-600">{actors.secondaryActor}</div>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 max-w-xs">
+                          <p className="text-slate-700 text-[11px] line-clamp-2" title={tx.description}>
+                            {tx.description || 'Néant'}
+                          </p>
+                        </td>
+                        <td className="py-3 px-4 text-right font-black text-sm text-amber-800 whitespace-nowrap font-mono">
+                          {formatCurrency(tx.amount)}
+                        </td>
+                        <td className="py-3 px-4 text-center">
+                          <div className="flex items-center justify-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setPrintedTransfer({
+                                  ref: tx.reference || 'VERS',
+                                  amount: tx.amount,
+                                  senderName: actors.primaryActor
+                                    ? actors.primaryActor.replace(/^Émetteur\s*:\s*/i, '')
+                                    : actors.operator,
+                                  receiverName: actors.secondaryActor
+                                    ? actors.secondaryActor.replace(/^Récepteur\s*:\s*/i, '')
+                                    : 'Direction / Comptabilité',
+                                  date: tx.transactionDate,
+                                  notes: tx.description,
+                                  attachmentUrl: tx.attachmentUrl,
+                                  attachmentName: tx.attachmentName,
+                                  title: routeBadge.label,
+                                  sourceLabel: isRetBq
+                                    ? bankSettings.bankName || 'Banque'
+                                    : isDepBq
+                                    ? 'Grande Caisse (Coffre Direction)'
+                                    : 'Petite Caisse (Accueil)',
+                                  destLabel: isDepBq
+                                    ? bankSettings.bankName || 'Banque'
+                                    : 'Grande Caisse (Coffre Direction)',
+                                })
+                              }
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold cursor-pointer"
+                              title="Imprimer le Bordereau A4"
+                            >
+                              <Printer className="w-3.5 h-3.5" />
+                              <span>Bordereau A4</span>
+                            </button>
+                            {isAdminOrAccountant && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenEditTx(tx)}
+                                  className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 cursor-pointer"
+                                  title="Modifier"
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteTx(tx)}
+                                  className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer"
+                                  title="Supprimer"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* ONGLET 1c : MOUVEMENTS BANQUE (DÉDIÉ COMPTABLE & ADMINISTRATEUR)          */}
+      {/* ========================================================================= */}
+      {activeTab === 'bank' && !isReceptionist && (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden space-y-5 p-5">
+          <div className="p-4 rounded-2xl bg-gradient-to-r from-indigo-950 via-indigo-900 to-blue-900 text-white flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <Landmark className="w-5 h-5 text-indigo-300" />
+                <span className="text-xs font-black uppercase tracking-wider text-indigo-200">
+                  {bankSettings.bankName || 'Banque'}
+                </span>
+              </div>
+              <div className="text-3xl font-black tracking-tight">
+                {formatCurrency(soldeDisponibleBanque)}
+              </div>
+              <div className="text-[11px] text-indigo-200 flex flex-wrap gap-x-4 gap-y-1">
+                <span>Titulaire : <strong className="text-white">{bankSettings.bankHolder || 'Clinique Betesda'}</strong></span>
+                <span>RIB / Compte : <strong className="text-white font-mono">{bankSettings.bankRib || 'Néant'}</strong></span>
+                <span>Entrées : <strong className="text-emerald-300">+{formatCurrency(recettesBanque)}</strong></span>
+                <span>Sorties : <strong className="text-rose-300">-{formatCurrency(sortiesBanque)}</strong></span>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setError('');
+                  setTransferType('GRANDE_CAISSE_TO_BANQUE');
+                  setTransferForm((prev) => ({
+                    ...prev,
+                    senderName: `${currentUser.firstName} ${currentUser.lastName}`.trim(),
+                    receiverName: bankSettings.bankName || 'Banque',
+                    notes: 'Dépôt bancaire depuis Grande Caisse',
+                  }));
+                  setShowTransferModal(true);
+                }}
+                disabled={soldeDisponibleGrandeCaisse <= 0}
+                className="px-3.5 py-2 rounded-xl text-xs font-black bg-emerald-500 hover:bg-emerald-600 text-white disabled:opacity-50 cursor-pointer"
+              >
+                + Dépôt vers Banque
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setError('');
+                  setTransferType('BANQUE_TO_GRANDE_CAISSE');
+                  setTransferForm((prev) => ({
+                    ...prev,
+                    senderName: bankSettings.bankName || 'Banque',
+                    receiverName: `${currentUser.firstName} ${currentUser.lastName}`.trim(),
+                    notes: 'Retrait bancaire vers Grande Caisse',
+                  }));
+                  setShowTransferModal(true);
+                }}
+                disabled={soldeDisponibleBanque <= 0}
+                className="px-3.5 py-2 rounded-xl text-xs font-black bg-white text-indigo-900 hover:bg-indigo-50 disabled:opacity-50 cursor-pointer"
+              >
+                Retrait vers Grande Caisse
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowBankSettingsModal(true)}
+                className="px-3 py-2 rounded-xl text-xs font-bold bg-white/15 hover:bg-white/25 text-white border border-white/25 flex items-center gap-1.5 cursor-pointer"
+              >
+                <Settings className="w-3.5 h-3.5" />
+                <span>Paramètres Banque</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto border border-slate-100 rounded-xl">
+            <table className="w-full text-xs text-left">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-bold text-[10px] tracking-wider">
+                  <th className="py-3 px-4">Date &amp; Réf.</th>
+                  <th className="py-3 px-4">Sens / Catégorie</th>
+                  <th className="py-3 px-4">Opérateur</th>
+                  <th className="py-3 px-4">Libellé / Détails</th>
+                  <th className="py-3 px-4 text-right">Montant</th>
+                  <th className="py-3 px-4 text-center">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {bankTransactionsList.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="py-10 text-center text-slate-400">
+                      Aucun mouvement bancaire enregistré.
+                    </td>
+                  </tr>
+                ) : (
+                  bankTransactionsList.map((tx) => {
+                    const isCredit = tx.type === 'INCOME';
+                    const actors = parseTransactionActors(tx);
+                    return (
+                      <tr key={tx.id} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="py-3 px-4 whitespace-nowrap">
+                          <div className="font-bold text-slate-900">{formatDate(tx.transactionDate)}</div>
+                          <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700">
+                            {tx.reference || 'BQ'}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4">
+                          <span
+                            className={`inline-block px-2 py-0.5 rounded-md text-[10px] font-extrabold border ${
+                              isCredit
+                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                : 'bg-rose-50 text-rose-700 border-rose-200'
+                            }`}
+                          >
+                            {isCredit ? 'CRÉDIT (+)' : 'DÉBIT (-)'} • {tx.category}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 font-semibold text-slate-700">{actors.operator}</td>
+                        <td className="py-3 px-4 text-slate-600 max-w-md">{tx.description || 'Néant'}</td>
+                        <td className={`py-3 px-4 text-right font-black font-mono text-sm whitespace-nowrap ${isCredit ? 'text-emerald-700' : 'text-rose-600'}`}>
+                          {isCredit ? `+${formatCurrency(tx.amount)}` : `-${formatCurrency(tx.amount)}`}
+                        </td>
+                        <td className="py-3 px-4 text-center">
+                          <div className="flex items-center justify-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setPrintedExpense(tx)}
+                              className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-700 hover:bg-indigo-50 cursor-pointer"
+                              title="Imprimer justificatif A4"
+                            >
+                              <Printer className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEditTx(tx)}
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 cursor-pointer"
+                              title="Modifier"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteTx(tx)}
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer"
+                              title="Supprimer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* ONGLET 1d : CONSULTATIONS WEEK-END (BUDGET À PART & PAIEMENT MÉDECINS)    */}
+      {/* ========================================================================= */}
+      {activeTab === 'weekend-consultations' && !isReceptionist && (
+        <div className="space-y-6">
+          {/* En-tête & Actions Budget Week-end */}
+          <div className="p-5 rounded-2xl bg-gradient-to-r from-violet-900 via-purple-900 to-indigo-900 text-white shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-white/15 text-violet-200 uppercase tracking-wider">
+                <Calendar className="w-3.5 h-3.5" />
+                <span>Gestion à Part • Budget Consultations Week-end (Samedi &amp; Dimanche)</span>
+              </span>
+              <h2 className="text-xl font-black tracking-tight mt-1">
+                Caisse Consultations Week-end &amp; Honoraires Médecins
+              </h2>
+              <p className="text-xs text-violet-200 max-w-2xl">
+                Toutes les recettes de consultations effectuées le week-end sont isolées ici pour suivre le budget disponible et régler directement les honoraires des médecins de garde.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  setError('');
+                  setShowWeekendIncomeModal(true);
+                }}
+                className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold bg-white/15 hover:bg-white/25 text-white border border-white/25 transition-colors cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Enregistrer Entrée Week-end</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setError('');
+                  setWeekendDoctorPayForm((prev) => ({
+                    ...prev,
+                    selectedDoctorOption: doctorOptions[0]?.name || 'CUSTOM',
+                  }));
+                  setShowWeekendDoctorPayModal(true);
+                }}
+                disabled={soldeDisponibleWeekend <= 0}
+                className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-black bg-emerald-500 hover:bg-emerald-600 text-white disabled:opacity-50 disabled:cursor-not-allowed shadow-sm transition-colors cursor-pointer"
+              >
+                <Stethoscope className="w-4 h-4" />
+                <span>Payer un Médecin (Budget Week-end)</span>
+              </button>
+            </div>
+          </div>
+
+          {/* 3 Cartes KPI du Budget Consultations Week-end */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="p-5 rounded-2xl bg-gradient-to-br from-white to-violet-50 border-2 border-violet-400 shadow-xs space-y-1">
+              <div className="text-[11px] font-black text-violet-800 uppercase tracking-wider">
+                ★ Budget Disponible Week-end
+              </div>
+              <div className="text-3xl font-black text-violet-950 font-mono">
+                {formatCurrency(soldeDisponibleWeekend)}
+              </div>
+              <p className="text-[11px] text-slate-500">
+                Argent disponible pour les paiements honoraires médecins week-end.
+              </p>
+            </div>
+
+            <div className="p-5 rounded-2xl bg-white border border-emerald-200 shadow-xs space-y-1">
+              <div className="text-[11px] font-black text-emerald-700 uppercase tracking-wider">
+                Total Entrées Consultations Week-end
+              </div>
+              <div className="text-2xl font-black text-emerald-800 font-mono">
+                +{formatCurrency(totalWeekendIncome)}
+              </div>
+              <p className="text-[11px] text-slate-500">
+                {allWeekendEntries.length} consultation(s) Samedi &amp; Dimanche comptabilisée(s).
+              </p>
+            </div>
+
+            <div className="p-5 rounded-2xl bg-white border border-rose-200 shadow-xs space-y-1">
+              <div className="text-[11px] font-black text-rose-700 uppercase tracking-wider">
+                Total Versé aux Médecins (Week-end)
+              </div>
+              <div className="text-2xl font-black text-rose-700 font-mono">
+                -{formatCurrency(totalWeekendPaidDoctors)}
+              </div>
+              <p className="text-[11px] text-slate-500">
+                {weekendDoctorPayments.length} paiement(s) médecin(s) effectué(s).
+              </p>
+            </div>
+          </div>
+
+          {/* Filtres Mois & Médecin */}
+          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-slate-600">Mois :</span>
+                <select
+                  value={weekendMonthFilter}
+                  onChange={(e) => setWeekendMonthFilter(e.target.value)}
+                  className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white font-semibold text-slate-800"
+                >
+                  <option value="ALL">Tous les mois</option>
+                  {weekendAvailableMonths.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-slate-600">Médecin :</span>
+                <select
+                  value={weekendDoctorFilter}
+                  onChange={(e) => setWeekendDoctorFilter(e.target.value)}
+                  className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white font-semibold text-slate-800"
+                >
+                  <option value="ALL">Tous les médecins</option>
+                  {doctorOptions.map((doc) => (
+                    <option key={doc.id} value={doc.name}>
+                      {doc.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="text-[11px] text-slate-500 font-medium">
+              Les consultations encaissées le Samedi et Dimanche alimentent automatiquement ce budget séparé.
+            </div>
+          </div>
+
+          {/* Tableau 1 : Entrées de Consultations Week-end */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden p-5 space-y-3">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
+                <Stethoscope className="w-4 h-4 text-violet-600" />
+                <span>Entrées de Consultations Week-end ({filteredWeekendEntries.length})</span>
+              </h3>
+              <span className="text-xs font-black text-emerald-700">
+                Total affiché : +{formatCurrency(filteredWeekendEntries.reduce((s, e) => s + e.amount, 0))}
+              </span>
+            </div>
+
+            <div className="overflow-x-auto border border-slate-100 rounded-xl">
+              <table className="w-full text-xs text-left">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-bold text-[10px] tracking-wider">
+                    <th className="py-2.5 px-3">Date &amp; Jour</th>
+                    <th className="py-2.5 px-3">Référence</th>
+                    <th className="py-2.5 px-3">Patient</th>
+                    <th className="py-2.5 px-3">Médecin</th>
+                    <th className="py-2.5 px-3">Acte / Motif</th>
+                    <th className="py-2.5 px-3">Mode</th>
+                    <th className="py-2.5 px-3 text-right">Montant</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredWeekendEntries.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="py-8 text-center text-slate-400">
+                        Aucune entrée de consultation week-end trouvée pour ce filtre.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredWeekendEntries.map((entry) => (
+                      <tr key={entry.id} className="hover:bg-slate-50/70 transition-colors">
+                        <td className="py-2.5 px-3 whitespace-nowrap">
+                          <div className="font-bold text-slate-900">{formatDate(entry.date)}</div>
+                          <span className="inline-block px-1.5 py-0.5 rounded bg-violet-100 text-violet-800 text-[10px] font-bold">
+                            {entry.dayLabel}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3 font-mono font-bold text-indigo-700">{entry.ref}</td>
+                        <td className="py-2.5 px-3 font-semibold text-slate-800">{entry.patientName || 'Néant'}</td>
+                        <td className="py-2.5 px-3 font-bold text-violet-900">{entry.doctorName}</td>
+                        <td className="py-2.5 px-3 text-slate-600">{entry.actName}</td>
+                        <td className="py-2.5 px-3">
+                          <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-semibold text-[10px]">
+                            {entry.paymentMethod}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-black font-mono text-emerald-700">
+                          +{formatCurrency(entry.amount)}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Tableau 2 : Paiements aux Médecins effectués sur le Budget Week-end */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden p-5 space-y-3">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
+                <DollarSign className="w-4 h-4 text-rose-600" />
+                <span>Paiements Honoraires Médecins — Budget Week-end ({filteredWeekendDoctorPayments.length})</span>
+              </h3>
+              <span className="text-xs font-black text-rose-700">
+                Total versé : -{formatCurrency(filteredWeekendDoctorPayments.reduce((s, p) => s + p.amount, 0))}
+              </span>
+            </div>
+
+            <div className="overflow-x-auto border border-slate-100 rounded-xl">
+              <table className="w-full text-xs text-left">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-bold text-[10px] tracking-wider">
+                    <th className="py-2.5 px-3">Date &amp; Réf.</th>
+                    <th className="py-2.5 px-3">Médecin Payé &amp; Détails</th>
+                    <th className="py-2.5 px-3">Opérateur (Comptable / Admin)</th>
+                    <th className="py-2.5 px-3">Mode</th>
+                    <th className="py-2.5 px-3 text-right">Montant Versé</th>
+                    <th className="py-2.5 px-3 text-center">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredWeekendDoctorPayments.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="py-8 text-center text-slate-400">
+                        Aucun paiement médecin enregistré sur le budget week-end pour le moment.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredWeekendDoctorPayments.map((pay) => {
+                      const actors = parseTransactionActors(pay);
+                      return (
+                        <tr key={pay.id} className="hover:bg-slate-50/70 transition-colors">
+                          <td className="py-2.5 px-3 whitespace-nowrap">
+                            <div className="font-bold text-slate-900">{formatDate(pay.transactionDate)}</div>
+                            <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-50 text-rose-700">
+                              {pay.reference || 'PAY-MED-WE'}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3 max-w-md">
+                            <div className="font-extrabold text-slate-900">{actors.primaryActor || 'Médecin'}</div>
+                            <div className="text-[11px] text-slate-500 mt-0.5">{pay.description}</div>
+                          </td>
+                          <td className="py-2.5 px-3 font-semibold text-slate-700">{actors.operator}</td>
+                          <td className="py-2.5 px-3">
+                            <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-semibold text-[10px]">
+                              {pay.paymentMethod}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-black font-mono text-rose-700">
+                            -{formatCurrency(pay.amount)}
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
+                            <div className="flex items-center justify-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => setPrintedWeekendPayment(pay)}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-violet-50 hover:bg-violet-100 text-violet-800 text-[11px] font-bold cursor-pointer"
+                                title="Imprimer le Reçu Honoraires Médecin A4"
+                              >
+                                <Printer className="w-3.5 h-3.5" />
+                                <span>Reçu A4</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditTx(pay)}
+                                className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 cursor-pointer"
+                                title="Modifier"
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteTx(pay)}
+                                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer"
+                                title="Supprimer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
@@ -3023,9 +4200,26 @@ export default function ExpensesClient({
                     <option value="Transport & Déplacements">Transport &amp; Déplacements professionnels</option>
                     <option value="Primes & Avances Personnel">Primes &amp; Avances ponctuelles personnel</option>
                     <option value="Divers & Urgences">Divers &amp; Urgences imprévues</option>
+                    <option value="Autre">Autre (Catégorie personnalisée...)</option>
                   </select>
                 </div>
               </div>
+
+              {expenseForm.category === 'Autre' && (
+                <div className="p-3 rounded-xl bg-amber-50/70 border border-amber-200">
+                  <label className="block font-bold text-amber-900 mb-1">
+                    Précisez la catégorie personnalisée *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={expenseForm.customCategory}
+                    onChange={(e) => setExpenseForm({ ...expenseForm, customCategory: e.target.value })}
+                    placeholder="Ex: Carburant groupe électrogène, Restauration garde, Frais bancaires..."
+                    className="w-full px-3 py-2 rounded-lg border border-amber-300 bg-white font-semibold text-slate-900 focus:outline-hidden focus:ring-2 focus:ring-amber-400"
+                  />
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -3063,14 +4257,24 @@ export default function ExpensesClient({
               {/* Simulation dynamique du solde disponible après dépense */}
               {(() => {
                 const amt = parseFloat(expenseForm.amount) || 0;
+                const isBank = expenseForm.cashRegister === 'BANQUE';
                 const isGrande = expenseForm.cashRegister === 'GRANDE_CAISSE';
-                const curBalance = isGrande ? soldeDisponibleGrandeCaisse : soldeDisponiblePetiteCaisse;
+                const curBalance = isBank
+                  ? soldeDisponibleBanque
+                  : isGrande
+                  ? soldeDisponibleGrandeCaisse
+                  : soldeDisponiblePetiteCaisse;
+                const registerTitle = isBank
+                  ? bankSettings.bankName || 'Banque'
+                  : isGrande
+                  ? 'Grande Caisse (Comptable / Admin)'
+                  : 'Petite Caisse (Accueil)';
                 const newBalance = curBalance - amt;
                 return (
                   <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between text-xs">
                     <div>
                       <span className="text-[10px] font-bold text-slate-500 uppercase block">
-                        Solde dispo {isGrande ? 'Grande Caisse (Admin)' : 'Petite Caisse (Accueil)'}
+                        Solde dispo {registerTitle}
                       </span>
                       <span className="font-extrabold text-slate-900">{formatCurrency(curBalance)}</span>
                     </div>
@@ -3091,26 +4295,26 @@ export default function ExpensesClient({
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block font-bold text-slate-700 mb-1">
-                    Bénéficiaire (Personne / Entité)
+                    Bénéficiaire (Optionnel — Néant par défaut)
                   </label>
                   <input
                     type="text"
                     value={expenseForm.beneficiary}
                     onChange={(e) => setExpenseForm({ ...expenseForm, beneficiary: e.target.value })}
-                    placeholder="Ex: Jirama, Propriétaire, Fournisseur..."
+                    placeholder="Néant (ou Jirama, Fournisseur...)"
                     className="w-full px-3 py-2 rounded-lg border border-slate-200"
                   />
                 </div>
 
                 <div>
                   <label className="block font-bold text-slate-700 mb-1">
-                    N° Référence / Facture (Optionnel)
+                    N° Référence / Facture (Optionnel — Néant par défaut)
                   </label>
                   <input
                     type="text"
                     value={expenseForm.reference}
                     onChange={(e) => setExpenseForm({ ...expenseForm, reference: e.target.value })}
-                    placeholder="Ex: FAC-2026-089"
+                    placeholder="Néant (ou ex: FAC-2026-089)"
                     className="w-full px-3 py-2 rounded-lg border border-slate-200"
                   />
                 </div>
@@ -3684,6 +4888,7 @@ export default function ExpensesClient({
                     <option value="PETITE_CAISSE">Petite Caisse (Accueil)</option>
                     <option value="GRANDE_CAISSE">Grande Caisse (Coffre Direction)</option>
                     <option value="BANQUE">Banque</option>
+                    <option value="CONSULTATION_WEEKEND">Consultations Week-end</option>
                   </select>
                 </div>
 
@@ -3900,6 +5105,437 @@ export default function ExpensesClient({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL : ENREGISTRER UNE ENTRÉE CONSULTATION WEEK-END                      */}
+      {/* ========================================================================= */}
+      {showWeekendIncomeModal && (
+        <div
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowWeekendIncomeModal(false);
+          }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs cursor-pointer"
+        >
+          <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden p-6 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
+                  <Calendar className="w-5 h-5 text-violet-600" />
+                  <span>Enregistrer une Entrée Consultation Week-end</span>
+                </h3>
+                <p className="text-[11px] text-slate-500">
+                  Alimente directement le budget dédié « Consultations Week-end ».
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowWeekendIncomeModal(false)}
+                className="w-8 h-8 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmitWeekendIncome} className="space-y-3 text-xs">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Montant encaissé (Ar) *</label>
+                  <input
+                    type="number"
+                    min="1"
+                    required
+                    value={weekendIncomeForm.amount}
+                    onChange={(e) => setWeekendIncomeForm({ ...weekendIncomeForm, amount: e.target.value })}
+                    placeholder="Ex: 25000"
+                    className="w-full px-3 py-2 rounded-lg border border-slate-300 font-black text-emerald-700 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Date (Samedi / Dimanche) *</label>
+                  <input
+                    type="date"
+                    required
+                    value={weekendIncomeForm.transactionDate}
+                    onChange={(e) => setWeekendIncomeForm({ ...weekendIncomeForm, transactionDate: e.target.value })}
+                    className="w-full px-3 py-2 rounded-lg border border-slate-200"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Médecin consultant</label>
+                  <select
+                    value={weekendIncomeForm.doctorName}
+                    onChange={(e) => setWeekendIncomeForm({ ...weekendIncomeForm, doctorName: e.target.value })}
+                    className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white font-semibold"
+                  >
+                    <option value="">Médecin de garde</option>
+                    {doctorOptions.map((doc) => (
+                      <option key={doc.id} value={doc.name}>
+                        {doc.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Mode de paiement</label>
+                  <select
+                    value={weekendIncomeForm.paymentMethod}
+                    onChange={(e) => setWeekendIncomeForm({ ...weekendIncomeForm, paymentMethod: e.target.value })}
+                    className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white"
+                  >
+                    <option value="CASH">Espèces</option>
+                    <option value="MOBILE_MONEY">Mobile Money</option>
+                    <option value="BANK_TRANSFER">Virement Bancaire</option>
+                    <option value="CREDIT_CARD">Carte / Chèque</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Patient (Optionnel — Néant par défaut)</label>
+                  <input
+                    type="text"
+                    value={weekendIncomeForm.patientName}
+                    onChange={(e) => setWeekendIncomeForm({ ...weekendIncomeForm, patientName: e.target.value })}
+                    placeholder="Néant (ou nom du patient)"
+                    className="w-full px-3 py-2 rounded-lg border border-slate-200"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Acte / Prestation</label>
+                  <input
+                    type="text"
+                    value={weekendIncomeForm.actName}
+                    onChange={(e) => setWeekendIncomeForm({ ...weekendIncomeForm, actName: e.target.value })}
+                    placeholder="Consultation Week-end"
+                    className="w-full px-3 py-2 rounded-lg border border-slate-200"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Remarque (Optionnel — Néant par défaut)</label>
+                <input
+                  type="text"
+                  value={weekendIncomeForm.notes}
+                  onChange={(e) => setWeekendIncomeForm({ ...weekendIncomeForm, notes: e.target.value })}
+                  placeholder="Néant"
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowWeekendIncomeModal(false)}
+                  className="px-4 py-2 rounded-xl text-slate-600 hover:bg-slate-100 font-semibold"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="px-5 py-2.5 rounded-xl font-black text-white bg-violet-600 hover:bg-violet-700 shadow-sm cursor-pointer"
+                >
+                  {loading ? 'Enregistrement...' : 'Ajouter au Budget Week-end'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL : PAYER UN MÉDECIN AVEC L'ARGENT DES CONSULTATIONS WEEK-END         */}
+      {/* ========================================================================= */}
+      {showWeekendDoctorPayModal && (
+        <div
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowWeekendDoctorPayModal(false);
+          }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs cursor-pointer"
+        >
+          <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden p-6 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
+                  <Stethoscope className="w-5 h-5 text-emerald-600" />
+                  <span>Payer un Médecin — Budget Consultations Week-end</span>
+                </h3>
+                <p className="text-[11px] text-slate-500">
+                  Décaissement d'honoraires financé exclusivement par la caisse Consultations Week-end.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowWeekendDoctorPayModal(false)}
+                className="w-8 h-8 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmitWeekendDoctorPayment} className="space-y-3 text-xs">
+              {/* Simulation solde week-end */}
+              {(() => {
+                const amt = parseFloat(weekendDoctorPayForm.amount) || 0;
+                const remaining = soldeDisponibleWeekend - amt;
+                return (
+                  <div className="p-3 rounded-xl bg-violet-50 border border-violet-200 flex items-center justify-between">
+                    <div>
+                      <span className="text-[10px] font-black text-violet-700 uppercase block">
+                        Budget Consultations Week-end Disponible
+                      </span>
+                      <span className="text-base font-black text-violet-950 font-mono">
+                        {formatCurrency(soldeDisponibleWeekend)}
+                      </span>
+                    </div>
+                    {amt > 0 && (
+                      <div className="text-right">
+                        <span className="text-[10px] font-bold text-slate-500 uppercase block">
+                          Reste après paiement
+                        </span>
+                        <span className={`text-sm font-black font-mono ${remaining < 0 ? 'text-rose-600' : 'text-emerald-700'}`}>
+                          {formatCurrency(remaining)}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Médecin Bénéficiaire *</label>
+                <select
+                  required
+                  value={weekendDoctorPayForm.selectedDoctorOption}
+                  onChange={(e) =>
+                    setWeekendDoctorPayForm({ ...weekendDoctorPayForm, selectedDoctorOption: e.target.value })
+                  }
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white font-bold text-slate-800"
+                >
+                  <option value="">-- Choisir un médecin --</option>
+                  {doctorOptions.map((doc) => (
+                    <option key={doc.id} value={doc.name}>
+                      {doc.label}
+                    </option>
+                  ))}
+                  <option value="CUSTOM">Autre médecin / Médecin remplaçant...</option>
+                </select>
+              </div>
+
+              {weekendDoctorPayForm.selectedDoctorOption === 'CUSTOM' && (
+                <div>
+                  <label className="block font-bold text-violet-800 mb-1">Nom complet du médecin *</label>
+                  <input
+                    type="text"
+                    required
+                    value={weekendDoctorPayForm.customDoctorName}
+                    onChange={(e) =>
+                      setWeekendDoctorPayForm({ ...weekendDoctorPayForm, customDoctorName: e.target.value })
+                    }
+                    placeholder="Ex: Dr. Rakotomalala Nirina"
+                    className="w-full px-3 py-2 rounded-lg border border-violet-300 bg-violet-50/40 font-semibold"
+                  />
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Montant à payer (Ar) *</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max={soldeDisponibleWeekend}
+                    required
+                    value={weekendDoctorPayForm.amount}
+                    onChange={(e) =>
+                      setWeekendDoctorPayForm({ ...weekendDoctorPayForm, amount: e.target.value })
+                    }
+                    placeholder={`Max ${soldeDisponibleWeekend}`}
+                    className="w-full px-3 py-2 rounded-lg border border-slate-300 font-black text-rose-600 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Date du paiement *</label>
+                  <input
+                    type="date"
+                    required
+                    value={weekendDoctorPayForm.transactionDate}
+                    onChange={(e) =>
+                      setWeekendDoctorPayForm({ ...weekendDoctorPayForm, transactionDate: e.target.value })
+                    }
+                    className="w-full px-3 py-2 rounded-lg border border-slate-200"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Week-end concerné</label>
+                  <input
+                    type="text"
+                    value={weekendDoctorPayForm.weekendPeriod}
+                    onChange={(e) =>
+                      setWeekendDoctorPayForm({ ...weekendDoctorPayForm, weekendPeriod: e.target.value })
+                    }
+                    placeholder="Ex: Week-end du 21-22 Nov 2026"
+                    className="w-full px-3 py-2 rounded-lg border border-slate-200"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Mode de règlement</label>
+                  <select
+                    value={weekendDoctorPayForm.paymentMethod}
+                    onChange={(e) =>
+                      setWeekendDoctorPayForm({ ...weekendDoctorPayForm, paymentMethod: e.target.value })
+                    }
+                    className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white"
+                  >
+                    <option value="CASH">Espèces</option>
+                    <option value="MOBILE_MONEY">Mobile Money (MVola / OM)</option>
+                    <option value="BANK_TRANSFER">Virement Bancaire</option>
+                    <option value="CREDIT_CARD">Chèque</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Remarque (Optionnel — Néant par défaut)</label>
+                <input
+                  type="text"
+                  value={weekendDoctorPayForm.notes}
+                  onChange={(e) =>
+                    setWeekendDoctorPayForm({ ...weekendDoctorPayForm, notes: e.target.value })
+                  }
+                  placeholder="Néant (ou nb de consultations, garde samedi/dimanche...)"
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowWeekendDoctorPayModal(false)}
+                  className="px-4 py-2 rounded-xl text-slate-600 hover:bg-slate-100 font-semibold"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading || (parseFloat(weekendDoctorPayForm.amount) || 0) > soldeDisponibleWeekend}
+                  className="px-5 py-2.5 rounded-xl font-black text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 shadow-sm cursor-pointer"
+                >
+                  {loading ? 'Traitement...' : 'Valider le Paiement Médecin'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL IMPRESSION A4 : REÇU HONORAIRES MÉDECIN (BUDGET WEEK-END)           */}
+      {/* ========================================================================= */}
+      {printedWeekendPayment && (
+        <div
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setPrintedWeekendPayment(null);
+          }}
+          className="fixed inset-0 z-50 flex flex-col items-center justify-start p-4 bg-slate-950/75 backdrop-blur-xs overflow-y-auto print-modal-overlay"
+        >
+          <div className="no-print flex items-center justify-between w-full max-w-2xl my-3 p-3 bg-slate-900 rounded-xl text-white shadow-lg border border-slate-800">
+            <div className="flex items-center gap-2 text-xs font-bold">
+              <Stethoscope className="w-4 h-4 text-violet-400" />
+              <span>Reçu Honoraires Médecin Week-end • Page A4</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() =>
+                  handlePrintCleanA4(`Recu_Medecin_Weekend_${printedWeekendPayment.reference || 'PAY'}_Betesda`)
+                }
+                className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black flex items-center gap-1.5 cursor-pointer"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>Imprimer / Télécharger PDF (A4)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setPrintedWeekendPayment(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          <div className="w-full max-w-2xl bg-white rounded-2xl p-8 shadow-2xl border border-slate-200 print-section space-y-6 text-slate-900">
+            <div className="flex items-start justify-between border-b-2 border-slate-900 pb-4">
+              <div>
+                <h2 className="text-xl font-black uppercase tracking-tight">
+                  {clinic?.name || 'CLINIQUE BETESDA'}
+                </h2>
+                <p className="text-xs text-slate-500">{clinic?.address || 'Antananarivo, Madagascar'}</p>
+                <p className="text-xs text-slate-500">Tél : {clinic?.phone || 'Néant'}</p>
+              </div>
+              <div className="text-right">
+                <div className="inline-block px-3 py-1 rounded-lg bg-violet-100 text-violet-900 font-black text-xs uppercase">
+                  Reçu Honoraires Médecin Week-end
+                </div>
+                <div className="font-mono font-bold text-xs mt-1">
+                  Réf : {printedWeekendPayment.reference || 'PAY-MED-WE'}
+                </div>
+                <div className="text-xs text-slate-500">
+                  Date : {formatDate(printedWeekendPayment.transactionDate)}
+                </div>
+              </div>
+            </div>
+
+            <div className="p-4 rounded-xl bg-violet-50/60 border border-violet-200 space-y-2 text-xs">
+              <div className="flex justify-between">
+                <span className="text-slate-600 font-semibold">Source des fonds :</span>
+                <strong className="text-violet-900">Budget Consultations Week-end (Samedi &amp; Dimanche)</strong>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-600 font-semibold">Mode de règlement :</span>
+                <strong>{printedWeekendPayment.paymentMethod}</strong>
+              </div>
+              <div className="pt-2 border-t border-violet-200">
+                <span className="text-slate-600 font-semibold block">Détails / Bénéficiaire :</span>
+                <p className="font-bold text-slate-900 mt-0.5">{printedWeekendPayment.description}</p>
+              </div>
+            </div>
+
+            <div className="p-5 rounded-xl bg-slate-900 text-white flex items-center justify-between">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                Montant Net Versé au Médecin
+              </span>
+              <span className="text-2xl font-black font-mono text-emerald-300">
+                {formatCurrency(printedWeekendPayment.amount)}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-8 pt-6 text-xs">
+              <div className="border border-slate-300 rounded-xl p-4 h-28 flex flex-col justify-between">
+                <div className="font-bold text-slate-700">Signature Comptabilité / Direction</div>
+                <div className="text-[11px] text-slate-400">
+                  {printedWeekendPayment.performedBy
+                    ? `${printedWeekendPayment.performedBy.firstName} ${printedWeekendPayment.performedBy.lastName}`
+                    : `${currentUser.firstName} ${currentUser.lastName}`}
+                </div>
+              </div>
+              <div className="border border-slate-300 rounded-xl p-4 h-28 flex flex-col justify-between">
+                <div className="font-bold text-slate-700">Signature du Médecin Bénéficiaire</div>
+                <div className="text-[11px] text-slate-400">Lu et approuvé, bon pour acquit</div>
+              </div>
+            </div>
           </div>
         </div>
       )}

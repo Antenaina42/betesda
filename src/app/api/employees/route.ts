@@ -59,7 +59,7 @@ export async function POST(request: NextRequest) {
         clinicId: session.clinicId,
         lastName: lastName.trim().toUpperCase(),
         firstName: firstName.trim(),
-        phone: phone?.trim() || null,
+        phone: phone?.trim() || 'Néant',
         position: position.trim(),
         baseSalary: parseFloat(baseSalary || '0') || 0,
         isActive: true,
@@ -102,7 +102,7 @@ export async function PUT(request: NextRequest) {
       data: {
         lastName: lastName !== undefined ? lastName.trim().toUpperCase() : undefined,
         firstName: firstName !== undefined ? firstName.trim() : undefined,
-        phone: phone !== undefined ? (phone?.trim() || null) : undefined,
+        phone: phone !== undefined ? (phone?.trim() || 'Néant') : undefined,
         position: position !== undefined ? position.trim() : undefined,
         baseSalary: baseSalary !== undefined ? (parseFloat(baseSalary) || 0) : undefined,
         isActive: isActive !== undefined ? Boolean(isActive) : undefined,

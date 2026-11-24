@@ -130,7 +130,7 @@ export default function PatientDetailTabs({ patient, userRole }: PatientDetailTa
             }`} />
             <div>
               <span className="font-bold">Allergies connues : </span>
-              <span>{allergies || 'Aucune allergie signalée'}</span>
+              <span>{allergies || 'Néant'}</span>
             </div>
           </div>
 
@@ -140,10 +140,10 @@ export default function PatientDetailTabs({ patient, userRole }: PatientDetailTa
             <div>
               <span className="font-bold">Contact d'Urgence : </span>
               <span>
-                {patient.emergencyContactName ? (
-                  `${patient.emergencyContactName} (${patient.emergencyContactRel || 'Proche'}) — ${patient.emergencyContactPhone}`
+                {patient.emergencyContactName && patient.emergencyContactName !== 'Néant' ? (
+                  `${patient.emergencyContactName} (${patient.emergencyContactRel || 'Proche'}) — ${patient.emergencyContactPhone || 'Néant'}`
                 ) : (
-                  'Non renseigné'
+                  'Néant'
                 )}
               </span>
             </div>
@@ -299,7 +299,7 @@ export default function PatientDetailTabs({ patient, userRole }: PatientDetailTa
                 Antécédents Familiaux
               </span>
               <p className="text-slate-800 font-medium">
-                {patient.medicalRecord?.familyHistory || 'Non renseigné.'}
+                {patient.medicalRecord?.familyHistory || 'Néant'}
               </p>
             </div>
 
@@ -309,7 +309,7 @@ export default function PatientDetailTabs({ patient, userRole }: PatientDetailTa
                 Habitudes de vie & Toxiques
               </span>
               <p className="text-slate-800 font-medium">
-                {patient.medicalRecord?.habits || 'Aucun facteur toxique signalé.'}
+                {patient.medicalRecord?.habits || 'Néant'}
               </p>
             </div>
 
@@ -392,12 +392,12 @@ export default function PatientDetailTabs({ patient, userRole }: PatientDetailTa
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs pt-1">
                   <div>
                     <span className="font-bold text-slate-500 uppercase text-[10px] block">Diagnostic</span>
-                    <p className="text-slate-800 font-semibold mt-0.5">{c.diagnosis || 'Non renseigné'}</p>
+                    <p className="text-slate-800 font-semibold mt-0.5">{c.diagnosis || 'Néant'}</p>
                   </div>
 
                   <div>
                     <span className="font-bold text-slate-500 uppercase text-[10px] block">Traitement prescrit</span>
-                    <p className="text-slate-800 font-medium mt-0.5">{c.treatment || 'Aucun traitement'}</p>
+                    <p className="text-slate-800 font-medium mt-0.5">{c.treatment || 'Néant'}</p>
                   </div>
                 </div>
 

@@ -28,6 +28,8 @@ export default async function ExpensesPage() {
     dentalConsultations,
     dentalCashTransactions,
     staffMedicineSales,
+    doctors,
+    allConsultationsForWeekend,
   ] = await Promise.all([
     prisma.clinic.findUnique({
       where: { id: session.clinicId },
@@ -159,7 +161,39 @@ export default async function ExpensesPage() {
       orderBy: { createdAt: 'desc' },
       take: 200,
     }),
+    // Médecins actifs pour les paiements d'honoraires Consultations Week-end
+    prisma.doctor.findMany({
+      where: { clinicId: session.clinicId, isActive: true },
+      include: {
+        user: { select: { firstName: true, lastName: true, phone: true } },
+        specialty: { select: { name: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+    }),
+    // Consultations récentes (filtrées Samedi/Dimanche ci-dessous) pour l'onglet Consultations Week-end
+    isReceptionist
+      ? Promise.resolve([])
+      : prisma.consultation.findMany({
+          where: { patient: { clinicId: session.clinicId } },
+          include: {
+            patient: { select: { id: true, firstName: true, lastName: true, patientNumber: true, phone: true } },
+            doctor: {
+              include: {
+                user: { select: { firstName: true, lastName: true } },
+                specialty: { select: { name: true } },
+              },
+            },
+            invoice: { include: { payments: true } },
+          },
+          orderBy: { consultationDate: 'desc' },
+          take: 500,
+        }),
   ]);
+
+  const weekendConsultations = (allConsultationsForWeekend || []).filter((c: any) => {
+    const day = new Date(c.consultationDate).getDay();
+    return day === 0 || day === 6;
+  });
 
   return (
     <DashboardLayout user={session}>
@@ -175,6 +209,8 @@ export default async function ExpensesPage() {
         initialDentalConsultations={JSON.parse(JSON.stringify(dentalConsultations))}
         initialDentalCashTransactions={JSON.parse(JSON.stringify(dentalCashTransactions))}
         staffMedicineSales={JSON.parse(JSON.stringify(staffMedicineSales))}
+        doctors={JSON.parse(JSON.stringify(doctors))}
+        initialWeekendConsultations={JSON.parse(JSON.stringify(weekendConsultations))}
       />
     </DashboardLayout>
   );

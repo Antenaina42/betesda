@@ -15,8 +15,8 @@ export default async function UsersPage() {
     redirect('/dashboard?unauthorized=1');
   }
 
-  // 4 types d'utilisateurs autorisés : Accueil, Pharmacien, Administrateur, Super Admin
-  const ALLOWED_ROLE_NAMES: RoleType[] = ['RECEPTIONIST', 'PHARMACIST', 'CLINIC_ADMIN', 'SUPER_ADMIN'];
+  // 5 types d'utilisateurs autorisés : Accueil, Pharmacien, Comptable (Grande Caisse), Administrateur, Super Admin
+  const ALLOWED_ROLE_NAMES: RoleType[] = ['RECEPTIONIST', 'PHARMACIST', 'ACCOUNTANT', 'CLINIC_ADMIN', 'SUPER_ADMIN'];
 
   const [employees, users, roles] = await Promise.all([
     prisma.employee.findMany({
@@ -60,7 +60,7 @@ export default async function UsersPage() {
               <span>Gestion des Utilisateurs &amp; Personnel</span>
             </h1>
             <p className="text-xs text-slate-500 mt-0.5">
-              Répertoire de tous les employés (Nom, prénom, téléphone, poste, salaire) et gestion des 4 types de comptes utilisateurs (Accueil, Pharmacien, Administrateur, Super Admin).
+              Répertoire de tous les employés (Nom, prénom, téléphone, poste, salaire) et gestion des 5 types de comptes utilisateurs (Accueil, Pharmacien, Comptable Grande Caisse, Administrateur, Super Admin).
             </p>
           </div>
         </div>

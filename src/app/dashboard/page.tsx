@@ -43,7 +43,10 @@ export default async function DashboardPage() {
   const thirtyDays = new Date();
   thirtyDays.setDate(thirtyDays.getDate() + 30);
 
-  const isAdmin = session.role === 'SUPER_ADMIN' || session.role === 'CLINIC_ADMIN';
+  const isAdmin =
+    session.role === 'SUPER_ADMIN' ||
+    session.role === 'CLINIC_ADMIN' ||
+    session.role === 'ACCOUNTANT';
 
   // Trouver l'entité Doctor si le rôle est DOCTOR
   let doctorEntity: any = null;
