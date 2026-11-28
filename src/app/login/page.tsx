@@ -179,7 +179,7 @@ export default function LoginPage() {
             </p>
 
             <div className="space-y-2 text-xs">
-              {/* 1. Compte Accueil / Réception */}
+              {/* 1. Compte Petite Caisse */}
               <button
                 type="button"
                 onClick={() => handleQuickDemo('reception@betesda.mg')}
@@ -189,8 +189,8 @@ export default function LoginPage() {
                   <UserCheck className="w-4 h-4" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="font-bold text-slate-800">Accueil &amp; Réception</div>
-                  <div className="text-[10px] text-amber-700 font-medium truncate">Caisse, Consultations &amp; Encaissement Pharmacie</div>
+                  <div className="font-bold text-slate-800">Petite Caisse</div>
+                  <div className="text-[10px] text-amber-700 font-medium truncate">Petite Caisse, Consultations &amp; Encaissement Pharmacie</div>
                 </div>
               </button>
 
@@ -205,11 +205,11 @@ export default function LoginPage() {
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="font-bold text-slate-800">Pharmacie Clinique</div>
-                  <div className="text-[10px] text-blue-700 font-medium truncate">Demandes Médicaments, Envoi Accueil &amp; Entrée Stock</div>
+                  <div className="text-[10px] text-blue-700 font-medium truncate">Demandes Médicaments, Envoi Petite Caisse &amp; Entrée Stock</div>
                 </div>
               </button>
 
-              {/* 3. Compte Comptable (Grande Caisse, Banque & Consultations Week-end) */}
+              {/* 3. Compte Grande Caisse (Grande Caisse, Banque & Actes Spécifiques) */}
               <button
                 type="button"
                 onClick={() => handleQuickDemo('comptable@betesda.mg')}
@@ -219,8 +219,8 @@ export default function LoginPage() {
                   <DollarSign className="w-4 h-4" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="font-bold text-slate-800">Comptable (Grande Caisse &amp; Banque)</div>
-                  <div className="text-[10px] text-rose-700 font-medium truncate">Transferts, Dépenses, Banque, Paie &amp; Consultations Week-end</div>
+                  <div className="font-bold text-slate-800">Grande Caisse &amp; Banque</div>
+                  <div className="text-[10px] text-rose-700 font-medium truncate">Transferts, Dépenses, Banque, Paie &amp; Actes Spécifiques</div>
                 </div>
               </button>
 
