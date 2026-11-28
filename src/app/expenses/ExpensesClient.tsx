@@ -3796,7 +3796,7 @@ export default function ExpensesClient({
                 Total Versé aux Médecins
               </div>
               <div className="text-2xl font-black text-rose-700 font-mono">
-                -{formatCurrency(totalWeekendPaidDoctors)}
+                {formatCurrency(totalWeekendPaidDoctors)}
               </div>
               <p className="text-[11px] text-slate-500">
                 {weekendDoctorPayments.length} paiement(s) médecin(s) effectué(s).
@@ -4008,7 +4008,7 @@ export default function ExpensesClient({
                             </span>
                           </td>
                           <td className="py-2.5 px-3 text-right font-black font-mono text-rose-700">
-                            -{formatCurrency(pay.amount)}
+                            {formatCurrency(pay.amount)}
                           </td>
                           <td className="py-2.5 px-3 text-center">
                             <div className="flex items-center justify-center gap-1.5">
