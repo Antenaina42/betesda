@@ -67,11 +67,11 @@ export default function Sidebar({ user, clinicName, isOpen, onToggle, onCloseMob
   // Construction dynamique des sections du menu selon le rôle de l'utilisateur
   const menuSections = useMemo(() => {
     switch (user.role) {
-      // 1. COMPTE ACCUEIL / RÉCEPTION : Tableau de bord, Commande de paiement, Caisse consultation, Actes & Hébergements, Dépenses Petite Caisse, Bons de sortie
+      // 1. COMPTE PETITE CAISSE (anciennement ACCUEIL / RÉCEPTION)
       case 'RECEPTIONIST':
         return [
           {
-            title: 'ESPACE ACCUEIL & CAISSE',
+            title: 'ESPACE PETITE CAISSE',
             items: [
               {
                 label: 'Tableau de bord',
@@ -104,8 +104,13 @@ export default function Sidebar({ user, clinicName, isOpen, onToggle, onCloseMob
                 icon: ArrowRightLeft,
               },
               {
-                label: 'Consultations Week-end',
-                href: '/expenses?tab=weekend-consultations',
+                label: 'Bons de commande Médicaments',
+                href: '/expenses?tab=clinic-medicines',
+                icon: Pill,
+              },
+              {
+                label: 'Actes Spécifiques',
+                href: '/expenses?tab=specific-acts',
                 icon: Calendar,
               },
             ],
@@ -207,11 +212,11 @@ export default function Sidebar({ user, clinicName, isOpen, onToggle, onCloseMob
           },
         ];
 
-      // 5. COMPTE COMPTABLE (GESTION GRANDE CAISSE, TRANSFERTS, DÉPENSES, BANQUE & CONSULTATIONS WEEK-END)
+      // 5. COMPTE GRANDE CAISSE (anciennement COMPTABLE)
       case 'ACCOUNTANT':
         return [
           {
-            title: 'ESPACE COMPTABILITÉ',
+            title: 'ESPACE GRANDE CAISSE',
             items: [
               {
                 label: 'Tableau de bord',
@@ -221,7 +226,7 @@ export default function Sidebar({ user, clinicName, isOpen, onToggle, onCloseMob
             ],
           },
           {
-            title: 'GRANDE CAISSE & TRÉSORERIE',
+            title: 'GRANDE CAISSE & BANQUE',
             items: [
               {
                 label: 'Dépenses & Décaissements',
@@ -229,7 +234,7 @@ export default function Sidebar({ user, clinicName, isOpen, onToggle, onCloseMob
                 icon: ArrowDownRight,
               },
               {
-                label: 'Transferts entre Caisses',
+                label: 'Transferts & Versements',
                 href: '/expenses?tab=transfers',
                 icon: ArrowRightLeft,
               },
@@ -239,8 +244,8 @@ export default function Sidebar({ user, clinicName, isOpen, onToggle, onCloseMob
                 icon: Landmark,
               },
               {
-                label: 'Consultations Week-end',
-                href: '/expenses?tab=weekend-consultations',
+                label: 'Actes Spécifiques',
+                href: '/expenses?tab=specific-acts',
                 icon: Calendar,
               },
               {
@@ -321,8 +326,8 @@ export default function Sidebar({ user, clinicName, isOpen, onToggle, onCloseMob
                 icon: Wallet,
               },
               {
-                label: 'Consultations Week-end',
-                href: '/expenses?tab=weekend-consultations',
+                label: 'Actes Spécifiques',
+                href: '/expenses?tab=specific-acts',
                 icon: Calendar,
               },
               {

@@ -79,17 +79,11 @@ export async function POST(request: NextRequest) {
       reason, // Motif de visite
       vitals, // { temperature, systolicBP, diastolicBP, weight, height, heartRate, oxygenSaturation, bloodSugar, notes }
       isFreeConsultation, // Coche 0 Ar pour consultation gratuite
-      isWeekendConsultation, // Optionnel : forcer / désactiver l'imputation sur Budget Consultations Week-end
+      isSpecificAct, // Coche Acte spécifique (gestion séparée et règlement praticien)
+      isWeekendConsultation, // Optionnel : rétrocompatibilité
     } = body;
 
-    const nowDay = new Date().getDay();
-    const isTodayWeekend = nowDay === 0 || nowDay === 6;
-    // Le samedi et dimanche, l'option Consultation Week-end est automatiquement imposée et verrouillée
-    const isWeekend = isTodayWeekend
-      ? true
-      : isWeekendConsultation !== undefined
-      ? Boolean(isWeekendConsultation)
-      : false;
+    const isSpecific = Boolean(isSpecificAct || isWeekendConsultation);
 
     const parsedAmount = Math.max(0, parseFloat(amount || '0'));
     if (!parsedAmount && !isFreeConsultation) {
@@ -179,6 +173,7 @@ export async function POST(request: NextRequest) {
           patientId: patientRecord.id,
           doctorId: activeDoctorId,
           reason: reason || actName || 'Consultation Médicale',
+          doctorNotes: isSpecific ? '[ACTE SPÉCIFIQUE]' : null,
           status: ConsultationStatus.IN_PROGRESS,
           vitalSigns: (vitals && (vitals.systolicBP || vitals.temperature || vitals.weight || vitals.heartRate))
             ? {
@@ -268,7 +263,7 @@ export async function POST(request: NextRequest) {
       });
 
       // C. Inscription dans le journal de caisse (CashTransaction)
-      // Si la consultation a lieu le week-end (Samedi/Dimanche), elle alimente le budget séparé CONSULTATION_WEEKEND
+      // Si la consultation est un acte spécifique, elle est isolée en Petite Caisse jusqu'à versement vers la Grande Caisse
       const isInfirmerie = /soin|pansement|inject|perfus|infirm|bandage|suture/i.test(actsSummary);
       const docDisplay = consultation.doctor
         ? (consultation.doctor.firstName || consultation.doctor.lastName
@@ -279,14 +274,14 @@ export async function POST(request: NextRequest) {
         : 'Médecin consultant';
       const incomeCategory = isFreeConsultation
         ? 'Consultation Gratuite (0 Ar)'
-        : isWeekend && !isInfirmerie
-        ? 'Consultation Week-end'
+        : isSpecific && !isInfirmerie
+        ? 'Acte spécifique'
         : isInfirmerie
         ? 'Infirmerie'
         : 'Consultation';
-      // Les consultations week-end encaissées au comptoir vont dans la caisse week-end de l'Accueil (PETITE_CAISSE_WEEKEND)
-      // puis sont versées par l'Accueil vers la Grande Caisse Week-end (CONSULTATION_WEEKEND) pour le paiement des médecins.
-      const targetRegister = isWeekend && !isInfirmerie ? 'PETITE_CAISSE_WEEKEND' : 'PETITE_CAISSE';
+      // Les actes spécifiques encaissés au comptoir vont dans la caisse dédiée de la Petite Caisse (PETITE_CAISSE_WEEKEND)
+      // puis sont versés par la Petite Caisse vers la Grande Caisse (CONSULTATION_WEEKEND) pour le paiement des médecins.
+      const targetRegister = isSpecific && !isInfirmerie ? 'PETITE_CAISSE_WEEKEND' : 'PETITE_CAISSE';
 
       const cashTx = await tx.cashTransaction.create({
         data: {
@@ -298,8 +293,8 @@ export async function POST(request: NextRequest) {
           reference: invoiceNumber,
           description: isFreeConsultation
             ? `Consultation Gratuite (0 Ar) prise en charge clinique - ${patientRecord.lastName} ${patientRecord.firstName} (${actsSummary})`
-            : isWeekend && !isInfirmerie
-            ? `[WEEK-END] Encaissement consultation ${invoiceNumber} - ${patientRecord.lastName} ${patientRecord.firstName} (${actsSummary}) | Médecin : ${docDisplay}`
+            : isSpecific && !isInfirmerie
+            ? `[ACTE SPÉCIFIQUE] Encaissement consultation ${invoiceNumber} - ${patientRecord.lastName} ${patientRecord.firstName} (${actsSummary}) | Médecin : ${docDisplay}`
             : `Encaissement ${incomeCategory.toLowerCase()} ${invoiceNumber} - ${patientRecord.lastName} ${patientRecord.firstName} (${actsSummary})`,
           performedById: session.id,
           cashRegister: targetRegister,

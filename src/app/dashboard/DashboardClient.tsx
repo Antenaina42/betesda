@@ -802,30 +802,32 @@ export default function DashboardClient({
       {/* ========================================================================= */}
       {!isReceptionist && !isPharmacist && (
         <div className="space-y-6">
-          {/* 1. ÉTAT DES SOLDES EN TEMPS RÉEL (PETITE CAISSE, GRANDE CAISSE, BANQUE, TRÉSORERIE) */}
+          {/* 1. ÉTAT DES SOLDES EN TEMPS RÉEL (GRANDE CAISSE & BANQUE POUR GRANDE CAISSE, + PETITE CAISSE POUR ADMIN) */}
           {isAdmin && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <Link
-                href="/expenses"
-                className="group p-4 rounded-2xl bg-gradient-to-br from-white to-emerald-50/70 border border-emerald-200 hover:border-emerald-400 shadow-xs transition-all space-y-2"
-              >
-                <div className="flex items-center justify-between">
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-900 uppercase tracking-wider">
-                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                    Petite Caisse (Accueil)
-                  </span>
-                  <Wallet className="w-4 h-4 text-emerald-600 group-hover:scale-110 transition-transform" />
-                </div>
-                <div>
-                  <div className="text-2xl font-black text-emerald-900 tracking-tight">
-                    {formatCurrency(treasuryBalances.petiteCaisse)}
+            <div className={`grid grid-cols-1 sm:grid-cols-2 ${isAccountant ? 'lg:grid-cols-3' : 'lg:grid-cols-4'} gap-4`}>
+              {!isAccountant && (
+                <Link
+                  href="/expenses"
+                  className="group p-4 rounded-2xl bg-gradient-to-br from-white to-emerald-50/70 border border-emerald-200 hover:border-emerald-400 shadow-xs transition-all space-y-2"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-900 uppercase tracking-wider">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                      Petite Caisse (Accueil)
+                    </span>
+                    <Wallet className="w-4 h-4 text-emerald-600 group-hover:scale-110 transition-transform" />
                   </div>
-                  <div className="text-[11px] text-slate-500 mt-0.5 flex items-center justify-between">
-                    <span>Caisse de réception</span>
-                    <span className="text-emerald-700 font-bold group-hover:underline">Gérer →</span>
+                  <div>
+                    <div className="text-2xl font-black text-emerald-900 tracking-tight">
+                      {formatCurrency(treasuryBalances.petiteCaisse)}
+                    </div>
+                    <div className="text-[11px] text-slate-500 mt-0.5 flex items-center justify-between">
+                      <span>Caisse de réception</span>
+                      <span className="text-emerald-700 font-bold group-hover:underline">Gérer →</span>
+                    </div>
                   </div>
-                </div>
-              </Link>
+                </Link>
+              )}
 
               <Link
                 href="/expenses"
@@ -843,7 +845,7 @@ export default function DashboardClient({
                     {formatCurrency(treasuryBalances.grandeCaisse)}
                   </div>
                   <div className="text-[11px] text-slate-500 mt-0.5 flex items-center justify-between">
-                    <span>Coffre administrateur</span>
+                    <span>Coffre direction &amp; trésorerie</span>
                     <span className="text-blue-700 font-bold group-hover:underline">Gérer →</span>
                   </div>
                 </div>
@@ -877,16 +879,20 @@ export default function DashboardClient({
               >
                 <div className="flex items-center justify-between">
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-white/15 text-emerald-300 uppercase tracking-wider">
-                    Trésorerie Totale
+                    {isAccountant ? 'Trésorerie Grande Caisse & Banque' : 'Trésorerie Totale'}
                   </span>
                   <TrendingUp className="w-4 h-4 text-emerald-400 group-hover:scale-110 transition-transform" />
                 </div>
                 <div>
                   <div className="text-2xl font-black text-white tracking-tight">
-                    {formatCurrency(treasuryBalances.totalTreasury)}
+                    {formatCurrency(
+                      isAccountant
+                        ? treasuryBalances.grandeCaisse + treasuryBalances.banque
+                        : treasuryBalances.totalTreasury
+                    )}
                   </div>
                   <div className="text-[11px] text-slate-300 mt-0.5 flex items-center justify-between">
-                    <span>Cumul des 3 comptes</span>
+                    <span>{isAccountant ? 'Grande Caisse + Banque' : 'Cumul des 3 comptes'}</span>
                     <span className="text-emerald-300 font-bold group-hover:underline">Gestion Solde →</span>
                   </div>
                 </div>

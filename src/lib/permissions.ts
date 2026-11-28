@@ -103,9 +103,9 @@ export function getRoleBadgeLabel(role: RoleType | undefined | null): { label: s
       };
     case 'RECEPTIONIST':
       return {
-        label: 'Accueil & Réception',
+        label: 'Petite Caisse',
         color: 'bg-amber-100 text-amber-800 border-amber-200',
-        description: 'Accueil des patients, caisse & admissions',
+        description: 'Gestion de la Petite Caisse, encaissements consultations & pharmacie',
       };
     case 'NURSE':
       return {
@@ -115,9 +115,9 @@ export function getRoleBadgeLabel(role: RoleType | undefined | null): { label: s
       };
     case 'ACCOUNTANT':
       return {
-        label: 'Comptable (Grande Caisse)',
+        label: 'Grande Caisse',
         color: 'bg-rose-100 text-rose-800 border-rose-200',
-        description: 'Gestion Grande Caisse, Banque, transferts, dépenses, paie & consultations week-end',
+        description: 'Gestion Grande Caisse, Banque, virements & actes spécifiques',
       };
     default:
       return {

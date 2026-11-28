@@ -274,9 +274,9 @@ export default function ExpensesClient({
 
   const resolveTabFromParam = (param: string | null | undefined, isRec: boolean): ExpensesTab => {
     if (param === 'transfers') return 'transfers';
-    if (param === 'weekend-consultations' || param === 'weekend') return 'weekend-consultations';
+    if (param === 'weekend-consultations' || param === 'weekend' || param === 'specific-acts' || param === 'specific') return 'weekend-consultations';
+    if (param === 'clinic-medicines') return 'clinic-medicines';
     if (!isRec) {
-      if (param === 'clinic-medicines') return 'clinic-medicines';
       if (param === 'bank') return 'bank';
       if (param === 'payroll') return 'payroll';
       if (param === 'dentistry' || param === 'dentist') return 'dentistry';
@@ -410,7 +410,7 @@ export default function ExpensesClient({
     amount: '',
     patientName: '',
     doctorName: '',
-    actName: 'Consultation Week-end',
+    actName: 'Acte Spécifique',
     paymentMethod: 'CASH',
     transactionDate: new Date().toISOString().split('T')[0],
     notes: '',
@@ -418,12 +418,16 @@ export default function ExpensesClient({
 
   const [showWeekendDoctorPayModal, setShowWeekendDoctorPayModal] = useState(false);
   const [weekendDoctorPayForm, setWeekendDoctorPayForm] = useState({
+    selectedConsultationRef: '',
+    consultationTotalAmount: 0,
+    patientName: '',
+    actName: '',
     selectedDoctorOption: '',
     customDoctorName: '',
     amount: '',
     paymentMethod: 'CASH',
     transactionDate: new Date().toISOString().split('T')[0],
-    weekendPeriod: `Week-end du ${new Date().toLocaleDateString('fr-FR')}`,
+    weekendPeriod: `Actes du ${new Date().toLocaleDateString('fr-FR')}`,
     notes: '',
   });
   const [weekendMonthFilter, setWeekendMonthFilter] = useState('ALL');
@@ -897,16 +901,31 @@ export default function ExpensesClient({
       const docMatch = desc.match(/Médecin\s*:\s*([^|]+)/i);
       const patMatch = desc.match(/Patient\s*:\s*([^|]+)/i) || desc.match(/-\s*([^(|]+)\s*\(/);
       const actMatch = desc.match(/Acte\s*:\s*([^|]+)/i) || desc.match(/\(([^)]+)\)/);
-      const isWeTransfer = Boolean(tx.reference && tx.reference.startsWith('VERS-WE'));
+      const isWeTransfer = Boolean(
+        tx.reference &&
+          (tx.reference.startsWith('VERS-WE') || tx.reference.startsWith('VERS-SPEC'))
+      );
       list.push({
         id: `tx-${tx.id}`,
         date: String(tx.transactionDate),
-        dayLabel: dayNames[d.getDay()] || 'Week-end',
+        dayLabel: dayNames[d.getDay()] || 'Acte Spécifique',
         monthKey: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`,
-        ref: tx.reference || 'CONS-WE',
-        patientName: isWeTransfer ? 'Versement Accueil (Week-end)' : patMatch ? patMatch[1].trim() : 'Néant',
-        doctorName: isWeTransfer ? 'Caisse Accueil Week-end' : docMatch ? docMatch[1].trim() : 'Médecin de garde',
-        actName: isWeTransfer ? tx.category || 'Versement Week-end reçu' : actMatch ? actMatch[1].trim() : tx.category || 'Consultation Week-end',
+        ref: tx.reference || 'CONS-SPEC',
+        patientName: isWeTransfer
+          ? 'Versement Petite Caisse (Actes Spécifiques)'
+          : patMatch
+          ? patMatch[1].trim()
+          : 'Néant',
+        doctorName: isWeTransfer
+          ? 'Petite Caisse (Actes Spécifiques)'
+          : docMatch
+          ? docMatch[1].trim()
+          : 'Médecin de garde',
+        actName: isWeTransfer
+          ? tx.category || 'Versement Actes Spécifiques reçu'
+          : actMatch
+          ? actMatch[1].trim()
+          : tx.category || 'Acte Spécifique',
         amount: tx.amount,
         paymentMethod: tx.paymentMethod || 'CASH',
         operatorName: tx.performedBy ? `${tx.performedBy.firstName} ${tx.performedBy.lastName}` : 'Caisse',
@@ -947,17 +966,62 @@ export default function ExpensesClient({
     return list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [weekendDirectIncomes, petiteWeekendIncomes, initialWeekendConsultations]);
 
+  // Recettes Actes Spécifiques effectives reçues en Grande Caisse (versements Petite Caisse)
+  const totalGrandeSpecificReceived = useMemo(() => {
+    return weekendDirectIncomes.reduce((sum, e) => sum + e.amount, 0);
+  }, [weekendDirectIncomes]);
+
   const totalWeekendIncome = useMemo(() => {
-    return allWeekendEntries.reduce((sum, e) => sum + e.amount, 0);
-  }, [allWeekendEntries]);
+    return totalGrandeSpecificReceived;
+  }, [totalGrandeSpecificReceived]);
 
   const totalWeekendPaidDoctors = useMemo(() => {
     return weekendDoctorPayments.reduce((sum, p) => sum + p.amount, 0);
   }, [weekendDoctorPayments]);
 
+  // ★ Solde disponible en Grande Caisse pour payer les médecins
+  // Strictement calculé d'après les versements reçus (sans inclure les sommes non encore versées de Petite Caisse)
   const soldeDisponibleWeekend = useMemo(() => {
-    return Math.max(0, totalWeekendIncome - totalWeekendPaidDoctors);
-  }, [totalWeekendIncome, totalWeekendPaidDoctors]);
+    return Math.max(0, totalGrandeSpecificReceived - totalWeekendPaidDoctors);
+  }, [totalGrandeSpecificReceived, totalWeekendPaidDoctors]);
+
+  // Suivi des actes spécifiques déjà réglés aux médecins
+  const specificActPaymentsMap = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        payRef: string;
+        doctorPaid: number;
+        retained: number;
+        doctorName: string;
+        date: string;
+        rawTx: ExpenseTx;
+      }
+    >();
+    weekendDoctorPayments.forEach((p) => {
+      const desc = p.description || '';
+      const facMatch = desc.match(/(FAC-CONS-[^ |)]+)/i) || desc.match(/\((FAC-[^)]+)\)/i);
+      const docMatch = desc.match(/Médecin\s*:\s*([^|]+)/i) || desc.match(/Bénéficiaire\s*:\s*([^|]+)/i);
+      const retainedMatch = desc.match(/Part Grande Caisse\s*:\s*([0-9\s]+)/i);
+      if (facMatch) {
+        const ref = facMatch[1].trim();
+        const retainedAmt = retainedMatch ? parseFloat(retainedMatch[1].replace(/\s/g, '')) || 0 : 0;
+        map.set(ref, {
+          payRef: p.reference || 'PAY-MED-SPEC',
+          doctorPaid: p.amount,
+          retained: retainedAmt,
+          doctorName: docMatch ? docMatch[1].trim() : 'Médecin',
+          date: String(p.transactionDate),
+          rawTx: p,
+        });
+      }
+    });
+    return map;
+  }, [weekendDoctorPayments]);
+
+  const totalRetainedInGrandeCaisse = useMemo(() => {
+    return Array.from(specificActPaymentsMap.values()).reduce((sum, p) => sum + p.retained, 0);
+  }, [specificActPaymentsMap]);
 
   const filteredWeekendEntries = useMemo(() => {
     return allWeekendEntries.filter((e) => {
@@ -1426,28 +1490,28 @@ export default function ExpensesClient({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action: 'WEEKEND_CONSULTATION_INCOME',
+          action: 'SPECIFIC_ACT_INCOME',
           amount: numAmount,
           patientName: weekendIncomeForm.patientName.trim() || 'Néant',
           doctorName: weekendIncomeForm.doctorName.trim() || 'Médecin de garde',
-          actName: weekendIncomeForm.actName.trim() || 'Consultation Week-end',
+          actName: weekendIncomeForm.actName.trim() || 'Acte Spécifique',
           paymentMethod: weekendIncomeForm.paymentMethod,
           transactionDate: combineDateWithCurrentTime(weekendIncomeForm.transactionDate),
           notes: weekendIncomeForm.notes.trim() || 'Néant',
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Erreur enregistrement consultation week-end');
+      if (!res.ok) throw new Error(data.error || 'Erreur enregistrement acte spécifique');
 
       setExpenses([data.transaction, ...expenses]);
       setShowWeekendIncomeModal(false);
-      setSuccessMsg(`✓ Entrée Consultation Week-end de ${formatCurrency(numAmount)} ajoutée au budget week-end !`);
+      setSuccessMsg(`✓ Entrée Acte Spécifique de ${formatCurrency(numAmount)} ajoutée au budget actes spécifiques !`);
       setTimeout(() => setSuccessMsg(''), 5000);
       setWeekendIncomeForm({
         amount: '',
         patientName: '',
         doctorName: '',
-        actName: 'Consultation Week-end',
+        actName: 'Acte Spécifique',
         paymentMethod: 'CASH',
         transactionDate: new Date().toISOString().split('T')[0],
         notes: '',
@@ -1460,7 +1524,7 @@ export default function ExpensesClient({
   };
 
   // =========================================================================
-  // SOUMISSION PAIEMENT MÉDECIN AVEC L'ARGENT DES CONSULTATIONS WEEK-END
+  // SOUMISSION PAIEMENT MÉDECIN AVEC L'ARGENT DES ACTES SPÉCIFIQUES & WEEK-END
   // =========================================================================
   const handleSubmitWeekendDoctorPayment = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1481,10 +1545,13 @@ export default function ExpensesClient({
     }
     if (numAmount > soldeDisponibleWeekend) {
       setError(
-        `Le paiement (${formatCurrency(numAmount)}) dépasse le budget disponible des consultations week-end (${formatCurrency(soldeDisponibleWeekend)}).`
+        `Le paiement (${formatCurrency(numAmount)}) dépasse le budget disponible des actes spécifiques en Grande Caisse (${formatCurrency(soldeDisponibleWeekend)}). Effectuez d'abord un versement depuis la Petite Caisse.`
       );
       return;
     }
+
+    const totalActAmt = weekendDoctorPayForm.consultationTotalAmount || 0;
+    const retainedAmt = totalActAmt > numAmount ? totalActAmt - numAmount : 0;
 
     setLoading(true);
     try {
@@ -1492,30 +1559,43 @@ export default function ExpensesClient({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action: 'WEEKEND_DOCTOR_PAYMENT',
+          action: 'SPECIFIC_DOCTOR_PAYMENT',
           doctorName: chosenDoctor,
           amount: numAmount,
+          consultationRef: weekendDoctorPayForm.selectedConsultationRef || null,
+          consultationTotalAmount: totalActAmt,
+          patientName: weekendDoctorPayForm.patientName || null,
+          actName: weekendDoctorPayForm.actName || null,
+          retainedAmount: retainedAmt,
           paymentMethod: weekendDoctorPayForm.paymentMethod,
           transactionDate: combineDateWithCurrentTime(weekendDoctorPayForm.transactionDate),
-          weekendPeriod: weekendDoctorPayForm.weekendPeriod.trim() || 'Week-end',
+          weekendPeriod: weekendDoctorPayForm.weekendPeriod.trim() || 'Acte Spécifique',
           notes: weekendDoctorPayForm.notes.trim() || 'Néant',
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Erreur paiement médecin week-end');
+      if (!res.ok) throw new Error(data.error || 'Erreur paiement médecin');
 
       setExpenses([data.paymentTx, ...expenses]);
       setShowWeekendDoctorPayModal(false);
       setPrintedWeekendPayment(data.paymentTx);
-      setSuccessMsg(`✓ Paiement de ${formatCurrency(numAmount)} versé à ${chosenDoctor} sur le budget Consultations Week-end !`);
+      setSuccessMsg(
+        totalActAmt > 0
+          ? `✓ Paiement de ${formatCurrency(numAmount)} versé à ${chosenDoctor} (Part clinique conservée en Grande Caisse : ${formatCurrency(retainedAmt)}) !`
+          : `✓ Paiement de ${formatCurrency(numAmount)} versé à ${chosenDoctor} sur le budget Actes Spécifiques !`
+      );
       setTimeout(() => setSuccessMsg(''), 6000);
       setWeekendDoctorPayForm({
+        selectedConsultationRef: '',
+        consultationTotalAmount: 0,
+        patientName: '',
+        actName: '',
         selectedDoctorOption: '',
         customDoctorName: '',
         amount: '',
         paymentMethod: 'CASH',
         transactionDate: new Date().toISOString().split('T')[0],
-        weekendPeriod: `Week-end du ${new Date().toLocaleDateString('fr-FR')}`,
+        weekendPeriod: `Actes du ${new Date().toLocaleDateString('fr-FR')}`,
         notes: '',
       });
     } catch (err: any) {
@@ -1523,6 +1603,26 @@ export default function ExpensesClient({
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleOpenPayDoctorForAct = (entry: any) => {
+    setError('');
+    const matchedDoc = doctorOptions.find((d) => d.name.toLowerCase().includes((entry.doctorName || '').toLowerCase()))?.name || entry.doctorName || '';
+    const halfAmt = Math.round(entry.amount / 2);
+    setWeekendDoctorPayForm({
+      selectedConsultationRef: entry.ref || '',
+      consultationTotalAmount: entry.amount || 0,
+      patientName: entry.patientName || '',
+      actName: entry.actName || '',
+      selectedDoctorOption: matchedDoc || 'CUSTOM',
+      customDoctorName: matchedDoc ? '' : entry.doctorName || '',
+      amount: String(halfAmt),
+      paymentMethod: 'CASH',
+      transactionDate: new Date().toISOString().split('T')[0],
+      weekendPeriod: `Acte du ${new Date(entry.date).toLocaleDateString('fr-FR')}`,
+      notes: `Rémunération pour ${entry.actName} (${entry.ref}) - Patient : ${entry.patientName}`,
+    });
+    setShowWeekendDoctorPayModal(true);
   };
 
   // Téléversement pièce jointe pour versement
@@ -1583,7 +1683,7 @@ export default function ExpensesClient({
 
     if (transferType === 'WEEKEND_PETITE_TO_WEEKEND_GRANDE' && numAmount > soldeDisponiblePetiteCaisseWeekend) {
       setError(
-        `Le montant du versement week-end (${formatCurrency(numAmount)}) ne peut pas dépasser le solde disponible en Caisse Week-end Accueil (${formatCurrency(soldeDisponiblePetiteCaisseWeekend)}).`
+        `Le montant du versement actes spécifiques (${formatCurrency(numAmount)}) ne peut pas dépasser le solde disponible en Petite Caisse (${formatCurrency(soldeDisponiblePetiteCaisseWeekend)}).`
       );
       return;
     }
@@ -1638,7 +1738,7 @@ export default function ExpensesClient({
         transferType === 'PETITE_CAISSE_TO_GRANDE_CAISSE'
           ? 'Versement Petite Caisse ➔ Grande Caisse'
           : transferType === 'WEEKEND_PETITE_TO_WEEKEND_GRANDE'
-          ? 'Versement Caisse Week-end Accueil ➔ Grande Caisse Week-end'
+          ? 'Versement Petite Caisse ➔ Grande Caisse (Actes Spécifiques)'
           : transferType === 'GRANDE_CAISSE_TO_BANQUE'
           ? 'Dépôt Grande Caisse ➔ Banque'
           : 'Retrait Banque ➔ Grande Caisse';
@@ -1661,9 +1761,9 @@ export default function ExpensesClient({
         title: titleLabel,
         sourceLabel:
           transferType === 'PETITE_CAISSE_TO_GRANDE_CAISSE'
-            ? 'Petite Caisse (Compte Accueil)'
+            ? 'Petite Caisse'
             : transferType === 'WEEKEND_PETITE_TO_WEEKEND_GRANDE'
-            ? 'Caisse Consultations Week-end (Accueil)'
+            ? 'Petite Caisse (Actes Spécifiques)'
             : transferType === 'GRANDE_CAISSE_TO_BANQUE'
             ? 'Grande Caisse (Coffre Direction)'
             : 'Banque',
@@ -1671,7 +1771,7 @@ export default function ExpensesClient({
           transferType === 'PETITE_CAISSE_TO_GRANDE_CAISSE'
             ? 'Grande Caisse (Coffre Direction)'
             : transferType === 'WEEKEND_PETITE_TO_WEEKEND_GRANDE'
-            ? 'Grande Caisse Consultations Week-end (Comptabilité)'
+            ? 'Grande Caisse (Actes Spécifiques)'
             : transferType === 'GRANDE_CAISSE_TO_BANQUE'
             ? 'Banque'
             : 'Grande Caisse (Coffre Direction)',
@@ -2031,10 +2131,12 @@ export default function ExpensesClient({
                 ? activeTab === 'transfers'
                   ? 'Versements vers Grande Caisse'
                   : activeTab === 'weekend-consultations'
-                  ? 'Consultations Week-end'
+                  ? 'Actes Spécifiques'
+                  : activeTab === 'clinic-medicines'
+                  ? 'Bons de commande Médicaments'
                   : 'Dépenses Petite Caisse'
                 : isAccountant
-                ? 'Comptabilité & Grande Caisse'
+                ? 'Grande Caisse & Banque'
                 : 'Gestion Solde'}
             </span>
           </div>
@@ -2045,10 +2147,12 @@ export default function ExpensesClient({
                 ? activeTab === 'transfers'
                   ? 'Versements Petite Caisse ➔ Grande Caisse'
                   : activeTab === 'weekend-consultations'
-                  ? 'Consultations Week-end (Accueil ➔ Grande Caisse Week-end)'
-                  : 'Dépenses Petite Caisse (Accueil)'
+                  ? 'Actes Spécifiques (Petite Caisse ➔ Grande Caisse)'
+                  : activeTab === 'clinic-medicines'
+                  ? 'Bons de Commande Médicaments Clinique'
+                  : 'Dépenses Petite Caisse'
                 : isAccountant
-                ? 'Compte Comptable — Grande Caisse, Banque & Consultations Week-end'
+                ? 'Compte Grande Caisse — Grande Caisse, Banque & Actes Spécifiques'
                 : 'Gestion Solde, Dépenses, Paie & Trésorerie'}
             </span>
           </h1>
@@ -2057,9 +2161,11 @@ export default function ExpensesClient({
               ? activeTab === 'transfers'
                 ? 'Espace dédié exclusivement aux versements de la Petite Caisse vers la Grande Caisse.'
                 : activeTab === 'weekend-consultations'
-                ? 'Suivi séparé des consultations encaissées le week-end et versement vers la Grande Caisse Week-end.'
-                : 'Gestion et suivi des menues dépenses autorisées sur la Petite Caisse Accueil.'
-              : "Pouvoir de décaissement et suivi financier : Dépenses, Transferts, Banque, Paie, Consultations Week-end & Dépenses Pharmacie Clinique."}
+                ? 'Suivi séparé des actes spécifiques encaissés et versement vers la Grande Caisse pour règlement praticien.'
+                : activeTab === 'clinic-medicines'
+                ? 'Émission des bons de commande / sortie pour le prélèvement interne de médicaments à la pharmacie.'
+                : 'Gestion et suivi des menues dépenses autorisées sur la Petite Caisse.'
+              : 'Pouvoir de décaissement et suivi financier : Dépenses, Transferts, Banque, Paie, Actes Spécifiques & Prélèvements Pharmacie Clinique.'}
           </p>
         </div>
 
@@ -2090,7 +2196,7 @@ export default function ExpensesClient({
                 setTransferForm((prev) => ({
                   ...prev,
                   senderName: connectedUserFullName,
-                  receiverName: 'Direction Clinique / Comptabilité',
+                  receiverName: 'Direction Clinique / Grande Caisse',
                   notes: 'Versement journalier des recettes de la Petite Caisse vers la Grande Caisse',
                 }));
                 setShowTransferModal(true);
@@ -2107,8 +2213,8 @@ export default function ExpensesClient({
             </button>
           )}
 
-          {/* Onglet Dépenses Pharmacie Clinique (Admin & Comptable uniquement) */}
-          {activeTab === 'clinic-medicines' && !isReceptionist && (
+          {/* Onglet Dépenses Pharmacie Clinique (Petite Caisse, Comptable & Admin) */}
+          {activeTab === 'clinic-medicines' && (
             <button
               type="button"
               onClick={() => {
@@ -2119,7 +2225,7 @@ export default function ExpensesClient({
               className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-black text-white bg-indigo-600 hover:bg-indigo-700 shadow-sm transition-colors cursor-pointer"
             >
               <Pill className="w-4 h-4" />
-              <span>Prélèvement Pharmacie (Clinique)</span>
+              <span>{isReceptionist ? 'Nouveau Bon de Commande Médicaments' : 'Prélèvement Pharmacie (Clinique)'}</span>
             </button>
           )}
         </div>
@@ -2143,9 +2249,9 @@ export default function ExpensesClient({
                   : 'bg-blue-500/20 text-blue-300 border-blue-500/40'
               }`}>
                 {currentUser.role === 'RECEPTIONIST'
-                  ? '👤 Compte Accueil • Gestion Petite Caisse'
+                  ? '👤 Compte Petite Caisse'
                   : currentUser.role === 'ACCOUNTANT'
-                  ? '📊 Compte Comptable • Gestion Grande Caisse, Banque & Consultations Week-end'
+                  ? '📊 Compte Grande Caisse • Gestion Grande Caisse, Banque & Actes Spécifiques'
                   : currentUser.role === 'SUPER_ADMIN'
                   ? '👑 Super Administrateur • Gestion Grande Caisse & Banque'
                   : currentUser.role === 'CLINIC_ADMIN'
@@ -2235,42 +2341,44 @@ export default function ExpensesClient({
           </div>
         )
       ) : (
-        /* VUE ADMINISTRATEUR : LES 3 SOLDES MAJEURS + TRÉSORERIE TOTALE */
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {/* Carte 1 : Solde Petite Caisse (Accueil) */}
-          <div className="p-4 rounded-2xl bg-gradient-to-br from-white to-emerald-50/50 border-2 border-emerald-300 shadow-xs space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-900 uppercase tracking-wider">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                <span>Petite Caisse (Accueil)</span>
-              </span>
-              <Wallet className="w-4 h-4 text-emerald-600" />
-            </div>
+        /* VUE GRANDE CAISSE (GRANDE CAISSE & BANQUE UNIQUEMENT) OU ADMIN (3 CAISSES) */
+        <div className={`grid grid-cols-1 sm:grid-cols-2 ${isAccountant ? 'lg:grid-cols-3' : 'lg:grid-cols-4'} gap-4`}>
+          {/* Carte 1 : Solde Petite Caisse (Accueil) — Masquée pour la Grande Caisse */}
+          {!isAccountant && (
+            <div className="p-4 rounded-2xl bg-gradient-to-br from-white to-emerald-50/50 border-2 border-emerald-300 shadow-xs space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-900 uppercase tracking-wider">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                  <span>Petite Caisse (Accueil)</span>
+                </span>
+                <Wallet className="w-4 h-4 text-emerald-600" />
+              </div>
 
-            <div>
-              <div className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider">
-                ★ Solde Petite Caisse
+              <div>
+                <div className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider">
+                  ★ Solde Petite Caisse
+                </div>
+                <div className={`text-2xl lg:text-3xl font-black tracking-tight ${soldeDisponiblePetiteCaisse > 0 ? 'text-emerald-800' : 'text-slate-700'}`}>
+                  {formatCurrency(soldeDisponiblePetiteCaisse)}
+                </div>
               </div>
-              <div className={`text-2xl lg:text-3xl font-black tracking-tight ${soldeDisponiblePetiteCaisse > 0 ? 'text-emerald-800' : 'text-slate-700'}`}>
-                {formatCurrency(soldeDisponiblePetiteCaisse)}
-              </div>
-            </div>
 
-            <div className="pt-2 border-t border-emerald-100 text-[10px] space-y-0.5 text-slate-600">
-              <div className="flex justify-between items-center">
-                <span>Recettes encaissées :</span>
-                <strong className="text-emerald-700 font-bold">+{formatCurrency(recettesPetiteCaisse)}</strong>
-              </div>
-              <div className="flex justify-between items-center">
-                <span>Menues dépenses :</span>
-                <strong className="text-slate-700 font-bold">-{formatCurrency(depensesPetiteCaisseHorsTransfert)}</strong>
-              </div>
-              <div className="flex justify-between items-center">
-                <span>Versé à l'Admin :</span>
-                <strong className="text-amber-700 font-bold">-{formatCurrency(totalTransfersAmount)}</strong>
+              <div className="pt-2 border-t border-emerald-100 text-[10px] space-y-0.5 text-slate-600">
+                <div className="flex justify-between items-center">
+                  <span>Recettes encaissées :</span>
+                  <strong className="text-emerald-700 font-bold">+{formatCurrency(recettesPetiteCaisse)}</strong>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span>Menues dépenses :</span>
+                  <strong className="text-slate-700 font-bold">-{formatCurrency(depensesPetiteCaisseHorsTransfert)}</strong>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span>Versé à l'Admin :</span>
+                  <strong className="text-amber-700 font-bold">-{formatCurrency(totalTransfersAmount)}</strong>
+                </div>
               </div>
             </div>
-          </div>
+          )}
 
           {/* Carte 2 : Solde Grande Caisse (Coffre Administrateur) */}
           <div className="p-4 rounded-2xl bg-gradient-to-br from-white to-blue-50/50 border-2 border-blue-400 shadow-xs space-y-2">
@@ -2359,29 +2467,35 @@ export default function ExpensesClient({
             </div>
           </div>
 
-          {/* Carte 4 : Trésorerie Totale Clinique (Petite Caisse + Grande Caisse + Banque) */}
+          {/* Carte 4 : Trésorerie Totale (Grande Caisse + Banque pour le comptable, ou + Petite Caisse pour l'Admin) */}
           <div className="p-4 rounded-2xl bg-gradient-to-br from-slate-900 to-slate-800 text-white shadow-md space-y-2 border border-slate-700">
             <div className="flex items-center justify-between">
               <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-400 text-slate-950 uppercase tracking-wider">
-                Vision Globale
+                {isAccountant ? 'Grande Caisse & Banque' : 'Vision Globale'}
               </span>
               <DollarSign className="w-4 h-4 text-amber-400" />
             </div>
 
             <div>
               <div className="text-[10px] font-extrabold text-slate-300 uppercase tracking-wider">
-                ★ Trésorerie Totale Clinique
+                ★ {isAccountant ? 'Trésorerie Grande Caisse & Banque' : 'Trésorerie Totale Clinique'}
               </div>
               <div className="text-2xl lg:text-3xl font-black text-amber-400 tracking-tight font-mono">
-                {formatCurrency(soldeTresorerieTotale)}
+                {formatCurrency(
+                  isAccountant
+                    ? soldeDisponibleGrandeCaisse + soldeDisponibleBanque
+                    : soldeTresorerieTotale
+                )}
               </div>
             </div>
 
             <div className="pt-2 border-t border-slate-700 text-[10px] space-y-0.5 text-slate-300">
-              <div className="flex justify-between items-center">
-                <span>Petite Caisse :</span>
-                <strong className="text-emerald-400">{formatCurrency(soldeDisponiblePetiteCaisse)}</strong>
-              </div>
+              {!isAccountant && (
+                <div className="flex justify-between items-center">
+                  <span>Petite Caisse :</span>
+                  <strong className="text-emerald-400">{formatCurrency(soldeDisponiblePetiteCaisse)}</strong>
+                </div>
+              )}
               <div className="flex justify-between items-center">
                 <span>Grande Caisse :</span>
                 <strong className="text-blue-300">{formatCurrency(soldeDisponibleGrandeCaisse)}</strong>
@@ -2447,7 +2561,7 @@ export default function ExpensesClient({
             }`}
           >
             <Calendar className="w-4 h-4" />
-            <span>Consultations Week-end</span>
+            <span>Actes Spécifiques</span>
             <span
               className={`px-1.5 py-0.5 rounded-full text-[10px] font-black ${
                 activeTab === 'weekend-consultations'
@@ -3079,13 +3193,13 @@ export default function ExpensesClient({
                     const actors = parseTransactionActors(tx);
                     const isDepBq = tx.reference?.startsWith('DEP-BQ');
                     const isRetBq = tx.reference?.startsWith('RET-BQ');
-                    const isWeVers = tx.reference?.startsWith('VERS-WE');
+                    const isWeVers = tx.reference?.startsWith('VERS-WE') || tx.reference?.startsWith('VERS-SPEC');
                     const routeBadge = isDepBq
                       ? { label: 'Grande Caisse ➔ Banque', cls: 'bg-blue-50 text-blue-700 border-blue-200' }
                       : isRetBq
                       ? { label: 'Banque ➔ Grande Caisse', cls: 'bg-indigo-50 text-indigo-700 border-indigo-200' }
                       : isWeVers
-                      ? { label: 'Caisse Week-end Accueil ➔ Grande Caisse Week-end', cls: 'bg-violet-50 text-violet-800 border-violet-200' }
+                      ? { label: 'Petite Caisse (Actes Spécifiques) ➔ Grande Caisse', cls: 'bg-violet-50 text-violet-800 border-violet-200' }
                       : { label: 'Petite Caisse ➔ Grande Caisse', cls: 'bg-emerald-50 text-emerald-800 border-emerald-200' };
 
                     return (
@@ -3343,7 +3457,7 @@ export default function ExpensesClient({
       )}
 
       {/* ========================================================================= */}
-      {/* ONGLET 1d-ACCUEIL : CONSULTATIONS WEEK-END (COMPTE ACCUEIL -> VERSEMENT)  */}
+      {/* ONGLET 1d-ACCUEIL : ACTES SPÉCIFIQUES (PETITE CAISSE -> VERSEMENT)        */}
       {/* ========================================================================= */}
       {activeTab === 'weekend-consultations' && isReceptionist && (
         <div className="space-y-6">
@@ -3351,13 +3465,13 @@ export default function ExpensesClient({
             <div className="space-y-1">
               <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-white/15 text-violet-200 uppercase tracking-wider">
                 <Calendar className="w-3.5 h-3.5" />
-                <span>Caisse Accueil • Consultations Week-end (Samedi &amp; Dimanche)</span>
+                <span>Petite Caisse • Actes Spécifiques Encaissés</span>
               </span>
               <h2 className="text-xl font-black tracking-tight mt-1">
-                Recettes Consultations Week-end &amp; Versement vers Grande Caisse Week-end
+                Recettes Actes Spécifiques &amp; Versement vers Grande Caisse
               </h2>
               <p className="text-xs text-violet-200 max-w-2xl">
-                Toutes les consultations encaissées le week-end s&apos;accumulent ici séparément de la Petite Caisse normale. Effectuez un versement vers la Grande Caisse Week-end pour le règlement des médecins.
+                Toutes les consultations et actes spécifiques s&apos;accumulent ici séparément de la Petite Caisse courante. Effectuez un versement vers la Grande Caisse pour permettre le règlement des honoraires praticiens.
               </p>
             </div>
 
@@ -3370,8 +3484,8 @@ export default function ExpensesClient({
                   ...prev,
                   amount: soldeDisponiblePetiteCaisseWeekend > 0 ? String(soldeDisponiblePetiteCaisseWeekend) : '',
                   senderName: connectedUserFullName,
-                  receiverName: 'Comptabilité / Grande Caisse Week-end',
-                  notes: 'Versement des recettes Consultations Week-end vers la Grande Caisse Week-end',
+                  receiverName: 'Grande Caisse (Direction / Comptabilité)',
+                  notes: 'Versement des recettes Actes Spécifiques vers la Grande Caisse',
                 }));
                 setShowTransferModal(true);
               }}
@@ -3379,54 +3493,54 @@ export default function ExpensesClient({
               className="inline-flex items-center gap-2 px-4 py-3 rounded-xl text-xs font-black bg-emerald-500 hover:bg-emerald-600 text-white disabled:opacity-50 disabled:cursor-not-allowed shadow-sm transition-colors cursor-pointer shrink-0"
             >
               <Wallet className="w-4 h-4" />
-              <span>Effectuer un Versement Week-end ➔ Grande Caisse Week-end</span>
+              <span>Effectuer un Versement Actes Spécifiques ➔ Grande Caisse</span>
             </button>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="p-5 rounded-2xl bg-gradient-to-br from-white to-violet-50 border-2 border-violet-400 shadow-xs space-y-1">
               <div className="text-[11px] font-black text-violet-800 uppercase tracking-wider">
-                ★ Solde Disponible Caisse Week-end (Accueil)
+                ★ Solde Actes Spécifiques à Verser (Petite Caisse)
               </div>
               <div className="text-3xl font-black text-violet-950 font-mono">
                 {formatCurrency(soldeDisponiblePetiteCaisseWeekend)}
               </div>
               <p className="text-[11px] text-slate-500">
-                Montant disponible à verser vers la Grande Caisse Week-end.
+                Montant disponible à verser vers la Grande Caisse.
               </p>
             </div>
 
             <div className="p-5 rounded-2xl bg-white border border-emerald-200 shadow-xs space-y-1">
               <div className="text-[11px] font-black text-emerald-700 uppercase tracking-wider">
-                Total Consultations Week-end Encaissées
+                Total Actes Spécifiques Encaissés
               </div>
               <div className="text-2xl font-black text-emerald-800 font-mono">
                 +{formatCurrency(totalPetiteWeekendIncome)}
               </div>
               <p className="text-[11px] text-slate-500">
-                {petiteWeekendIncomes.length} consultation(s) week-end encaissée(s).
+                {petiteWeekendIncomes.length} acte(s) spécifique(s) encaissé(s).
               </p>
             </div>
 
             <div className="p-5 rounded-2xl bg-white border border-amber-200 shadow-xs space-y-1">
               <div className="text-[11px] font-black text-amber-700 uppercase tracking-wider">
-                Total Versé vers Grande Caisse Week-end
+                Total Déjà Versé vers Grande Caisse
               </div>
               <div className="text-2xl font-black text-amber-800 font-mono">
                 -{formatCurrency(totalPetiteWeekendTransferred)}
               </div>
               <p className="text-[11px] text-slate-500">
-                {petiteWeekendTransfersOut.length} versement(s) week-end effectué(s).
+                {petiteWeekendTransfersOut.length} versement(s) effectué(s).
               </p>
             </div>
           </div>
 
-          {/* Tableau 1 : Recettes Consultations Week-end Accueil */}
+          {/* Tableau 1 : Recettes Actes Spécifiques Petite Caisse */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden p-5 space-y-3">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
                 <Stethoscope className="w-4 h-4 text-violet-600" />
-                <span>Entrées Consultations Week-end Encaissées ({petiteWeekendIncomes.length})</span>
+                <span>Entrées Actes Spécifiques Encaissées ({petiteWeekendIncomes.length})</span>
               </h3>
               <span className="text-xs font-black text-emerald-700">
                 Total : +{formatCurrency(totalPetiteWeekendIncome)}
@@ -3448,7 +3562,7 @@ export default function ExpensesClient({
                   {petiteWeekendIncomes.length === 0 ? (
                     <tr>
                       <td colSpan={5} className="py-8 text-center text-slate-400">
-                        Aucune consultation week-end encaissée pour le moment.
+                        Aucun acte spécifique encaissé pour le moment.
                       </td>
                     </tr>
                   ) : (
@@ -3458,7 +3572,7 @@ export default function ExpensesClient({
                           {formatDateTime(tx.transactionDate)}
                         </td>
                         <td className="py-2.5 px-3 font-mono font-bold text-violet-700">
-                          {tx.reference || 'CONS-WE'}
+                          {tx.reference || 'SPEC'}
                         </td>
                         <td className="py-2.5 px-3 text-slate-700">{tx.description}</td>
                         <td className="py-2.5 px-3">
@@ -3477,12 +3591,12 @@ export default function ExpensesClient({
             </div>
           </div>
 
-          {/* Tableau 2 : Versements Week-end vers Grande Caisse Week-end */}
+          {/* Tableau 2 : Versements vers Grande Caisse */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden p-5 space-y-3">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
                 <ArrowRightLeft className="w-4 h-4 text-emerald-600" />
-                <span>Historique des Versements Week-end vers Grande Caisse Week-end ({petiteWeekendTransfersOut.length})</span>
+                <span>Historique des Versements Actes Spécifiques vers Grande Caisse ({petiteWeekendTransfersOut.length})</span>
               </h3>
               <span className="text-xs font-black text-amber-700">
                 Total versé : {formatCurrency(totalPetiteWeekendTransferred)}
@@ -3504,7 +3618,7 @@ export default function ExpensesClient({
                   {petiteWeekendTransfersOut.length === 0 ? (
                     <tr>
                       <td colSpan={5} className="py-8 text-center text-slate-400">
-                        Aucun versement week-end effectué pour le moment.
+                        Aucun versement effectué pour le moment.
                       </td>
                     </tr>
                   ) : (
@@ -3516,7 +3630,7 @@ export default function ExpensesClient({
                             {formatDateTime(tx.transactionDate)}
                           </td>
                           <td className="py-2.5 px-3 font-mono font-bold text-violet-700">
-                            {tx.reference || 'VERS-WE'}
+                            {tx.reference || 'VERS-SPEC'}
                           </td>
                           <td className="py-2.5 px-3 text-slate-700">{tx.description}</td>
                           <td className="py-2.5 px-3 text-right font-black font-mono text-amber-800">
@@ -3527,17 +3641,17 @@ export default function ExpensesClient({
                               type="button"
                               onClick={() =>
                                 setPrintedTransfer({
-                                  ref: tx.reference || 'VERS-WE',
+                                  ref: tx.reference || 'VERS-SPEC',
                                   amount: tx.amount,
                                   senderName: actors.operator,
-                                  receiverName: 'Grande Caisse Week-end (Comptabilité)',
+                                  receiverName: 'Grande Caisse (Direction / Comptabilité)',
                                   date: tx.transactionDate,
                                   notes: tx.description,
                                   attachmentUrl: tx.attachmentUrl,
                                   attachmentName: tx.attachmentName,
-                                  title: 'Versement Caisse Week-end Accueil ➔ Grande Caisse Week-end',
-                                  sourceLabel: 'Caisse Consultations Week-end (Accueil)',
-                                  destLabel: 'Grande Caisse Consultations Week-end (Comptabilité)',
+                                  title: 'Versement Actes Spécifiques Petite Caisse ➔ Grande Caisse',
+                                  sourceLabel: 'Petite Caisse (Actes Spécifiques)',
+                                  destLabel: 'Grande Caisse (Budget Actes Spécifiques)',
                                 })
                               }
                               className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold cursor-pointer"
@@ -3558,23 +3672,27 @@ export default function ExpensesClient({
       )}
 
       {/* ========================================================================= */}
-      {/* ONGLET 1d : CONSULTATIONS WEEK-END (GRANDE CAISSE WEEK-END COMPTABLE/ADMIN) */}
+      {/* ONGLET 1d : ACTES SPÉCIFIQUES (GRANDE CAISSE COMPTABLE/ADMIN)              */}
       {/* ========================================================================= */}
       {activeTab === 'weekend-consultations' && !isReceptionist && (
         <div className="space-y-6">
-          {/* En-tête & Actions Budget Week-end */}
+          {/* En-tête & Actions Budget Actes Spécifiques */}
           <div className="p-5 rounded-2xl bg-gradient-to-r from-violet-900 via-purple-900 to-indigo-900 text-white shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4">
             <div className="space-y-1">
               <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-white/15 text-violet-200 uppercase tracking-wider">
                 <Calendar className="w-3.5 h-3.5" />
-                <span>Gestion à Part • Grande Caisse Consultations Week-end (Samedi &amp; Dimanche)</span>
+                <span>Grande Caisse • Actes Spécifiques &amp; Rémunération Médecins</span>
               </span>
               <h2 className="text-xl font-black tracking-tight mt-1">
-                Grande Caisse Consultations Week-end &amp; Honoraires Médecins
+                Grande Caisse Actes Spécifiques &amp; Partage des Revenus
               </h2>
               <p className="text-xs text-violet-200 max-w-2xl">
-                Toutes les recettes de consultations week-end versées par l&apos;Accueil (ou saisies ici) sont isolées dans ce budget pour régler directement les honoraires des médecins de garde.
+                Toutes les recettes des actes spécifiques versées par la Petite Caisse alimentent ce budget. La Grande Caisse rémunère les médecins en définissant le montant selon l&apos;acte sélectionné, et le reste demeure acquis à la Grande Caisse.
               </p>
+              <div className="text-[11px] text-amber-300 font-semibold flex items-center gap-1 mt-1">
+                <span>NB :</span>
+                <span>Les montants encaissés en Petite Caisse ne s&apos;affichent dans le solde disponible de la Grande Caisse qu&apos;après exécution du versement.</span>
+              </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-2 shrink-0">
@@ -3588,15 +3706,15 @@ export default function ExpensesClient({
                       ...prev,
                       amount: String(soldeDisponiblePetiteCaisseWeekend),
                       senderName: connectedUserFullName,
-                      receiverName: 'Grande Caisse Week-end (Comptabilité)',
-                      notes: 'Versement des recettes Consultations Week-end vers la Grande Caisse Week-end',
+                      receiverName: 'Grande Caisse (Direction / Comptabilité)',
+                      notes: 'Versement des recettes Actes Spécifiques vers la Grande Caisse',
                     }));
                     setShowTransferModal(true);
                   }}
                   className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-black bg-amber-400 hover:bg-amber-500 text-slate-950 shadow-sm transition-colors cursor-pointer"
                 >
                   <ArrowRightLeft className="w-4 h-4" />
-                  <span>Encaisser Week-end Accueil ({formatCurrency(soldeDisponiblePetiteCaisseWeekend)})</span>
+                  <span>Encaisser Petite Caisse ({formatCurrency(soldeDisponiblePetiteCaisseWeekend)})</span>
                 </button>
               )}
 
@@ -3609,7 +3727,7 @@ export default function ExpensesClient({
                 className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold bg-white/15 hover:bg-white/25 text-white border border-white/25 transition-colors cursor-pointer"
               >
                 <Plus className="w-4 h-4" />
-                <span>Enregistrer Entrée Week-end</span>
+                <span>Enregistrer Entrée Manuelle</span>
               </button>
 
               <button
@@ -3618,6 +3736,10 @@ export default function ExpensesClient({
                   setError('');
                   setWeekendDoctorPayForm((prev) => ({
                     ...prev,
+                    selectedConsultationRef: '',
+                    consultationTotalAmount: 0,
+                    patientName: '',
+                    actName: '',
                     selectedDoctorOption: doctorOptions[0]?.name || 'CUSTOM',
                   }));
                   setShowWeekendDoctorPayModal(true);
@@ -3626,52 +3748,52 @@ export default function ExpensesClient({
                 className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-black bg-emerald-500 hover:bg-emerald-600 text-white disabled:opacity-50 disabled:cursor-not-allowed shadow-sm transition-colors cursor-pointer"
               >
                 <Stethoscope className="w-4 h-4" />
-                <span>Payer un Médecin (Budget Week-end)</span>
+                <span>Payer un Médecin (Acte Spécifique)</span>
               </button>
             </div>
           </div>
 
-          {/* 4 Cartes KPI du Budget Consultations Week-end */}
+          {/* 4 Cartes KPI du Budget Actes Spécifiques */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="p-5 rounded-2xl bg-gradient-to-br from-white to-violet-50 border-2 border-violet-400 shadow-xs space-y-1">
               <div className="text-[11px] font-black text-violet-800 uppercase tracking-wider">
-                ★ Grande Caisse Week-end Disponible
+                ★ Grande Caisse Disponible
               </div>
               <div className="text-2xl lg:text-3xl font-black text-violet-950 font-mono">
                 {formatCurrency(soldeDisponibleWeekend)}
               </div>
               <p className="text-[11px] text-slate-500">
-                Budget disponible pour régler les médecins week-end.
+                Budget disponible en Grande Caisse pour régler les praticiens.
               </p>
             </div>
 
             <div className="p-5 rounded-2xl bg-amber-50/70 border border-amber-300 shadow-xs space-y-1">
               <div className="text-[11px] font-black text-amber-800 uppercase tracking-wider">
-                En attente à l&apos;Accueil (Week-end)
+                En attente à la Petite Caisse
               </div>
               <div className="text-2xl font-black text-amber-900 font-mono">
                 {formatCurrency(soldeDisponiblePetiteCaisseWeekend)}
               </div>
               <p className="text-[11px] text-amber-800/80">
-                Encaissé à l&apos;accueil, en attente de versement.
+                Encaissé à l&apos;accueil, versement en attente.
               </p>
             </div>
 
             <div className="p-5 rounded-2xl bg-white border border-emerald-200 shadow-xs space-y-1">
               <div className="text-[11px] font-black text-emerald-700 uppercase tracking-wider">
-                Total Entrées Grande Caisse Week-end
+                Total Entrées Reçues (Grande Caisse)
               </div>
               <div className="text-2xl font-black text-emerald-800 font-mono">
-                +{formatCurrency(totalWeekendIncome)}
+                +{formatCurrency(totalGrandeSpecificReceived)}
               </div>
               <p className="text-[11px] text-slate-500">
-                {allWeekendEntries.length} entrée(s) &amp; versement(s) week-end.
+                Versements effectifs reçus au coffre.
               </p>
             </div>
 
             <div className="p-5 rounded-2xl bg-white border border-rose-200 shadow-xs space-y-1">
               <div className="text-[11px] font-black text-rose-700 uppercase tracking-wider">
-                Total Versé aux Médecins (Week-end)
+                Total Versé aux Médecins
               </div>
               <div className="text-2xl font-black text-rose-700 font-mono">
                 -{formatCurrency(totalWeekendPaidDoctors)}
@@ -3719,19 +3841,24 @@ export default function ExpensesClient({
             </div>
 
             <div className="text-[11px] text-slate-500 font-medium">
-              Les consultations encaissées le Samedi et Dimanche alimentent automatiquement ce budget séparé.
+              Actes spécifiques réalisés et enregistrés par la Petite Caisse.
             </div>
           </div>
 
-          {/* Tableau 1 : Entrées de Consultations Week-end */}
+          {/* Tableau 1 : Détail de tous les Actes Spécifiques Encaissés */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden p-5 space-y-3">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
-                <Stethoscope className="w-4 h-4 text-violet-600" />
-                <span>Entrées de Consultations Week-end ({filteredWeekendEntries.length})</span>
-              </h3>
+              <div>
+                <h3 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
+                  <Stethoscope className="w-4 h-4 text-violet-600" />
+                  <span>Détail des Actes Spécifiques ({filteredWeekendEntries.length})</span>
+                </h3>
+                <p className="text-[11px] text-slate-500">
+                  Sélectionnez un acte pour payer le médecin praticien et conserver la part restante en Grande Caisse.
+                </p>
+              </div>
               <span className="text-xs font-black text-emerald-700">
-                Total affiché : +{formatCurrency(filteredWeekendEntries.reduce((s, e) => s + e.amount, 0))}
+                Total : +{formatCurrency(filteredWeekendEntries.reduce((s, e) => s + e.amount, 0))}
               </span>
             </div>
 
@@ -3739,57 +3866,101 @@ export default function ExpensesClient({
               <table className="w-full text-xs text-left">
                 <thead>
                   <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-bold text-[10px] tracking-wider">
-                    <th className="py-2.5 px-3">Date &amp; Jour</th>
-                    <th className="py-2.5 px-3">Référence</th>
+                    <th className="py-2.5 px-3">Date &amp; Heure</th>
+                    <th className="py-2.5 px-3">Réf. Facture</th>
                     <th className="py-2.5 px-3">Patient</th>
-                    <th className="py-2.5 px-3">Médecin</th>
+                    <th className="py-2.5 px-3">Médecin Praticien</th>
                     <th className="py-2.5 px-3">Acte / Motif</th>
-                    <th className="py-2.5 px-3">Mode</th>
-                    <th className="py-2.5 px-3 text-right">Montant</th>
+                    <th className="py-2.5 px-3 text-right">Montant Encaissé</th>
+                    <th className="py-2.5 px-3 text-center">Règlement Médecin</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {filteredWeekendEntries.length === 0 ? (
                     <tr>
                       <td colSpan={7} className="py-8 text-center text-slate-400">
-                        Aucune entrée de consultation week-end trouvée pour ce filtre.
+                        Aucun acte spécifique trouvé pour ce filtre.
                       </td>
                     </tr>
                   ) : (
-                    filteredWeekendEntries.map((entry) => (
-                      <tr key={entry.id} className="hover:bg-slate-50/70 transition-colors">
-                        <td className="py-2.5 px-3 whitespace-nowrap">
-                          <div className="font-bold text-slate-900">{formatDateTime(entry.date)}</div>
-                          <span className="inline-block px-1.5 py-0.5 rounded bg-violet-100 text-violet-800 text-[10px] font-bold">
-                            {entry.dayLabel}
-                          </span>
-                        </td>
-                        <td className="py-2.5 px-3 font-mono font-bold text-indigo-700">{entry.ref}</td>
-                        <td className="py-2.5 px-3 font-semibold text-slate-800">{entry.patientName || 'Néant'}</td>
-                        <td className="py-2.5 px-3 font-bold text-violet-900">{entry.doctorName}</td>
-                        <td className="py-2.5 px-3 text-slate-600">{entry.actName}</td>
-                        <td className="py-2.5 px-3">
-                          <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-semibold text-[10px]">
-                            {entry.paymentMethod}
-                          </span>
-                        </td>
-                        <td className="py-2.5 px-3 text-right font-black font-mono text-emerald-700">
-                          +{formatCurrency(entry.amount)}
-                        </td>
-                      </tr>
-                    ))
+                    filteredWeekendEntries.map((entry) => {
+                      const isPaid = specificActPaymentsMap.has(entry.ref);
+                      const payInfo = specificActPaymentsMap.get(entry.ref);
+                      const retainedClinicShare = payInfo
+                        ? payInfo.retained || Math.max(0, entry.amount - payInfo.doctorPaid)
+                        : 0;
+
+                      return (
+                        <tr key={entry.id} className="hover:bg-slate-50/70 transition-colors">
+                          <td className="py-2.5 px-3 whitespace-nowrap">
+                            <div className="font-bold text-slate-900">{formatDateTime(entry.date)}</div>
+                            <span className="inline-block px-1.5 py-0.5 rounded bg-violet-100 text-violet-800 text-[10px] font-bold">
+                              {entry.dayLabel}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3 font-mono font-bold text-indigo-700">{entry.ref}</td>
+                          <td className="py-2.5 px-3 font-semibold text-slate-800">{entry.patientName || 'Néant'}</td>
+                          <td className="py-2.5 px-3 font-bold text-violet-900">{entry.doctorName}</td>
+                          <td className="py-2.5 px-3 text-slate-600 max-w-xs">{entry.actName}</td>
+                          <td className="py-2.5 px-3 text-right font-black font-mono text-emerald-700 whitespace-nowrap">
+                            +{formatCurrency(entry.amount)}
+                          </td>
+                          <td className="py-2.5 px-3 text-center whitespace-nowrap">
+                            {isPaid && payInfo ? (
+                              <div className="inline-flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded-lg">
+                                <div className="text-left text-[10px]">
+                                  <div className="font-black text-emerald-800">
+                                    Médecin : {formatCurrency(payInfo.doctorPaid)}
+                                  </div>
+                                  <div className="font-bold text-blue-800">
+                                    Clinique : {formatCurrency(retainedClinicShare)}
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => setPrintedWeekendPayment(payInfo.rawTx)}
+                                  className="p-1 rounded text-violet-700 hover:bg-violet-100 cursor-pointer ml-1"
+                                  title="Imprimer / Voir le reçu médecin"
+                                >
+                                  <Printer className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="inline-flex items-center gap-1.5">
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-600">
+                                  Non rémunéré
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenPayDoctorForAct(entry)}
+                                  disabled={soldeDisponibleWeekend <= 0}
+                                  className="px-2.5 py-1 rounded-lg text-[10px] font-black bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-40 cursor-pointer transition-colors shadow-2xs"
+                                  title={
+                                    soldeDisponibleWeekend <= 0
+                                      ? "Solde Grande Caisse insuffisant. Effectuez un versement depuis la Petite Caisse d'abord."
+                                      : "Payer le médecin et enregistrer la part Grande Caisse"
+                                  }
+                                >
+                                  Régler Médecin →
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
             </div>
           </div>
 
-          {/* Tableau 2 : Paiements aux Médecins effectués sur le Budget Week-end */}
+          {/* Tableau 2 : Paiements aux Médecins effectués sur le Budget Actes Spécifiques */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden p-5 space-y-3">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
                 <DollarSign className="w-4 h-4 text-rose-600" />
-                <span>Paiements Honoraires Médecins — Budget Week-end ({filteredWeekendDoctorPayments.length})</span>
+                <span>Paiements Honoraires Médecins Décaissés ({filteredWeekendDoctorPayments.length})</span>
               </h3>
               <span className="text-xs font-black text-rose-700">
                 Total versé : -{formatCurrency(filteredWeekendDoctorPayments.reduce((s, p) => s + p.amount, 0))}
@@ -3802,7 +3973,7 @@ export default function ExpensesClient({
                   <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-bold text-[10px] tracking-wider">
                     <th className="py-2.5 px-3">Date &amp; Réf.</th>
                     <th className="py-2.5 px-3">Médecin Payé &amp; Détails</th>
-                    <th className="py-2.5 px-3">Opérateur (Comptable / Admin)</th>
+                    <th className="py-2.5 px-3">Opérateur (Grande Caisse)</th>
                     <th className="py-2.5 px-3">Mode</th>
                     <th className="py-2.5 px-3 text-right">Montant Versé</th>
                     <th className="py-2.5 px-3 text-center">Actions</th>
@@ -3812,7 +3983,7 @@ export default function ExpensesClient({
                   {filteredWeekendDoctorPayments.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="py-8 text-center text-slate-400">
-                        Aucun paiement médecin enregistré sur le budget week-end pour le moment.
+                        Aucun paiement médecin enregistré pour le moment.
                       </td>
                     </tr>
                   ) : (
@@ -3823,7 +3994,7 @@ export default function ExpensesClient({
                           <td className="py-2.5 px-3 whitespace-nowrap">
                             <div className="font-bold text-slate-900">{formatDateTime(pay.transactionDate)}</div>
                             <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-50 text-rose-700">
-                              {pay.reference || 'PAY-MED-WE'}
+                              {pay.reference || 'PAY-MED-SPEC'}
                             </span>
                           </td>
                           <td className="py-2.5 px-3 max-w-md">
@@ -3849,22 +4020,6 @@ export default function ExpensesClient({
                               >
                                 <Printer className="w-3.5 h-3.5" />
                                 <span>Reçu A4</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleOpenEditTx(pay)}
-                                className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 cursor-pointer"
-                                title="Modifier"
-                              >
-                                <Pencil className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteTx(pay)}
-                                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer"
-                                title="Supprimer"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
                               </button>
                             </div>
                           </td>
@@ -4890,9 +5045,9 @@ export default function ExpensesClient({
 
         const sourceLabel =
           transferType === 'PETITE_CAISSE_TO_GRANDE_CAISSE'
-            ? 'Petite Caisse (Accueil)'
+            ? 'Petite Caisse'
             : transferType === 'WEEKEND_PETITE_TO_WEEKEND_GRANDE'
-            ? 'Caisse Week-end (Accueil)'
+            ? 'Petite Caisse (Actes Spécifiques)'
             : transferType === 'GRANDE_CAISSE_TO_BANQUE'
             ? 'Grande Caisse (Coffre Direction)'
             : 'Banque';
@@ -4901,7 +5056,7 @@ export default function ExpensesClient({
           transferType === 'PETITE_CAISSE_TO_GRANDE_CAISSE'
             ? 'Grande Caisse (Coffre Direction)'
             : transferType === 'WEEKEND_PETITE_TO_WEEKEND_GRANDE'
-            ? 'Grande Caisse Week-end'
+            ? 'Grande Caisse (Actes Spécifiques)'
             : transferType === 'GRANDE_CAISSE_TO_BANQUE'
             ? 'Banque'
             : 'Grande Caisse (Coffre Direction)';
@@ -4929,7 +5084,7 @@ export default function ExpensesClient({
                     <Wallet className="w-5 h-5 text-emerald-600" />
                     <span>
                       {transferType === 'WEEKEND_PETITE_TO_WEEKEND_GRANDE'
-                        ? 'Versement : Caisse Week-end ➔ Grande Caisse Week-end'
+                        ? 'Versement : Petite Caisse ➔ Grande Caisse (Actes Spécifiques)'
                         : isReceptionist
                         ? 'Versement : Petite Caisse ➔ Grande Caisse'
                         : 'Mouvements & Transferts de Trésorerie'}
@@ -4937,10 +5092,10 @@ export default function ExpensesClient({
                   </h3>
                   <p className="text-[11px] text-slate-500 mt-0.5">
                     {transferType === 'WEEKEND_PETITE_TO_WEEKEND_GRANDE'
-                      ? "Transfert certifié des recettes de consultations week-end vers la Grande Caisse Week-end"
+                      ? "Transfert certifié des recettes d'actes spécifiques vers la Grande Caisse"
                       : isReceptionist
-                      ? "Transfert certifié des recettes collectées par l'Accueil vers la Grande Caisse"
-                      : 'Gestion des flux entre Petite Caisse, Grande Caisse, Caisse Week-end et Compte Bancaire'}
+                      ? "Transfert certifié des recettes collectées par la Petite Caisse vers la Grande Caisse"
+                      : 'Gestion des flux entre Petite Caisse, Grande Caisse, Actes Spécifiques et Compte Bancaire'}
                   </p>
                 </div>
                 <button
@@ -5562,7 +5717,7 @@ export default function ExpensesClient({
       )}
 
       {/* ========================================================================= */}
-      {/* MODAL : ENREGISTRER UNE ENTRÉE CONSULTATION WEEK-END                      */}
+      {/* MODAL : ENREGISTRER UNE ENTRÉE ACTE SPÉCIFIQUE                            */}
       {/* ========================================================================= */}
       {showWeekendIncomeModal && (
         <div
@@ -5576,10 +5731,10 @@ export default function ExpensesClient({
               <div>
                 <h3 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
                   <Calendar className="w-5 h-5 text-violet-600" />
-                  <span>Enregistrer une Entrée Consultation Week-end</span>
+                  <span>Enregistrer une Entrée Acte Spécifique</span>
                 </h3>
                 <p className="text-[11px] text-slate-500">
-                  Alimente directement le budget dédié « Consultations Week-end ».
+                  Alimente directement le budget dédié « Actes Spécifiques » (Grande Caisse).
                 </p>
               </div>
               <button
@@ -5606,7 +5761,7 @@ export default function ExpensesClient({
                   />
                 </div>
                 <div>
-                  <label className="block font-bold text-slate-700 mb-1">Date (Samedi / Dimanche) *</label>
+                  <label className="block font-bold text-slate-700 mb-1">Date *</label>
                   <input
                     type="date"
                     required
@@ -5665,7 +5820,7 @@ export default function ExpensesClient({
                     type="text"
                     value={weekendIncomeForm.actName}
                     onChange={(e) => setWeekendIncomeForm({ ...weekendIncomeForm, actName: e.target.value })}
-                    placeholder="Consultation Week-end"
+                    placeholder="Acte Spécifique"
                     className="w-full px-3 py-2 rounded-lg border border-slate-200"
                   />
                 </div>
@@ -5695,7 +5850,7 @@ export default function ExpensesClient({
                   disabled={loading}
                   className="px-5 py-2.5 rounded-xl font-black text-white bg-violet-600 hover:bg-violet-700 shadow-sm cursor-pointer"
                 >
-                  {loading ? 'Enregistrement...' : 'Ajouter au Budget Week-end'}
+                  {loading ? 'Enregistrement...' : 'Ajouter au Budget Actes Spécifiques'}
                 </button>
               </div>
             </form>
@@ -5704,7 +5859,7 @@ export default function ExpensesClient({
       )}
 
       {/* ========================================================================= */}
-      {/* MODAL : PAYER UN MÉDECIN AVEC L'ARGENT DES CONSULTATIONS WEEK-END         */}
+      {/* MODAL : PAYER UN MÉDECIN AVEC L'ARGENT DES ACTES SPÉCIFIQUES & WEEK-END    */}
       {/* ========================================================================= */}
       {showWeekendDoctorPayModal && (
         <div
@@ -5718,10 +5873,10 @@ export default function ExpensesClient({
               <div>
                 <h3 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
                   <Stethoscope className="w-5 h-5 text-emerald-600" />
-                  <span>Payer un Médecin — Budget Consultations Week-end</span>
+                  <span>Payer un Médecin — Actes Spécifiques</span>
                 </h3>
                 <p className="text-[11px] text-slate-500">
-                  Décaissement d'honoraires financé exclusivement par la caisse Consultations Week-end.
+                  Rémunération du praticien financée par les versements d'actes spécifiques reçus en Grande Caisse.
                 </p>
               </div>
               <button
@@ -5734,7 +5889,7 @@ export default function ExpensesClient({
             </div>
 
             <form onSubmit={handleSubmitWeekendDoctorPayment} className="space-y-3 text-xs">
-              {/* Simulation solde week-end */}
+              {/* Simulation solde budget disponible en Grande Caisse */}
               {(() => {
                 const amt = parseFloat(weekendDoctorPayForm.amount) || 0;
                 const remaining = soldeDisponibleWeekend - amt;
@@ -5742,7 +5897,7 @@ export default function ExpensesClient({
                   <div className="p-3 rounded-xl bg-violet-50 border border-violet-200 flex items-center justify-between">
                     <div>
                       <span className="text-[10px] font-black text-violet-700 uppercase block">
-                        Budget Consultations Week-end Disponible
+                        Budget Actes Spécifiques Disponible (Grande Caisse)
                       </span>
                       <span className="text-base font-black text-violet-950 font-mono">
                         {formatCurrency(soldeDisponibleWeekend)}
@@ -5751,7 +5906,7 @@ export default function ExpensesClient({
                     {amt > 0 && (
                       <div className="text-right">
                         <span className="text-[10px] font-bold text-slate-500 uppercase block">
-                          Reste après paiement
+                          Budget restant après paiement
                         </span>
                         <span className={`text-sm font-black font-mono ${remaining < 0 ? 'text-rose-600' : 'text-emerald-700'}`}>
                           {formatCurrency(remaining)}
@@ -5761,6 +5916,73 @@ export default function ExpensesClient({
                   </div>
                 );
               })()}
+
+              {/* Sélection de l'Acte Spécifique */}
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  Sélectionner l'Acte Spécifique à rémunérer (Recommandé)
+                </label>
+                <select
+                  value={weekendDoctorPayForm.selectedConsultationRef}
+                  onChange={(e) => {
+                    const chosenRef = e.target.value;
+                    const found = allWeekendEntries.find((item) => item.ref === chosenRef);
+                    if (found) {
+                      const matchedDoc = doctorOptions.find((d) =>
+                        d.name.toLowerCase().includes((found.doctorName || '').toLowerCase())
+                      )?.name || found.doctorName || '';
+                      const half = Math.round(found.amount / 2);
+                      setWeekendDoctorPayForm({
+                        ...weekendDoctorPayForm,
+                        selectedConsultationRef: chosenRef,
+                        consultationTotalAmount: found.amount,
+                        patientName: found.patientName,
+                        actName: found.actName,
+                        selectedDoctorOption: matchedDoc || 'CUSTOM',
+                        customDoctorName: matchedDoc ? '' : found.doctorName || '',
+                        amount: String(half),
+                        notes: `Rémunération pour ${found.actName} (${found.ref}) - Patient : ${found.patientName}`,
+                      });
+                    } else {
+                      setWeekendDoctorPayForm({
+                        ...weekendDoctorPayForm,
+                        selectedConsultationRef: '',
+                        consultationTotalAmount: 0,
+                        patientName: '',
+                        actName: '',
+                      });
+                    }
+                  }}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white font-medium text-slate-800"
+                >
+                  <option value="">-- Aucun (Paiement libre / forfaitaire) --</option>
+                  {allWeekendEntries
+                    .filter((item) => !specificActPaymentsMap.has(item.ref))
+                    .map((item) => (
+                      <option key={item.id} value={item.ref}>
+                        {item.ref} | {item.patientName} | {item.actName} ({formatCurrency(item.amount)}) - {item.doctorName}
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              {/* Détails de l'acte sélectionné */}
+              {weekendDoctorPayForm.consultationTotalAmount > 0 && (
+                <div className="p-3 rounded-xl bg-violet-50/80 border border-violet-200 text-xs space-y-1">
+                  <div className="flex justify-between items-center text-slate-700">
+                    <span>Acte rattaché :</span>
+                    <strong className="text-violet-900">{weekendDoctorPayForm.actName} ({weekendDoctorPayForm.selectedConsultationRef})</strong>
+                  </div>
+                  <div className="flex justify-between items-center text-slate-700">
+                    <span>Patient :</span>
+                    <strong>{weekendDoctorPayForm.patientName}</strong>
+                  </div>
+                  <div className="flex justify-between items-center text-slate-900 font-bold pt-1 border-t border-violet-200">
+                    <span>Montant total encaissé pour cet acte :</span>
+                    <span className="text-emerald-700 font-black font-mono">+{formatCurrency(weekendDoctorPayForm.consultationTotalAmount)}</span>
+                  </div>
+                </div>
+              )}
 
               <div>
                 <label className="block font-bold text-slate-700 mb-1">Médecin Bénéficiaire *</label>
@@ -5800,7 +6022,7 @@ export default function ExpensesClient({
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-bold text-slate-700 mb-1">Montant à payer (Ar) *</label>
+                  <label className="block font-bold text-slate-700 mb-1">Montant à verser au médecin (Ar) *</label>
                   <input
                     type="number"
                     min="1"
@@ -5828,16 +6050,36 @@ export default function ExpensesClient({
                 </div>
               </div>
 
+              {/* Rapprochement : Montant Acte vs Montant Payé Médecin vs Reste Grande Caisse */}
+              {weekendDoctorPayForm.consultationTotalAmount > 0 && (
+                <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs space-y-1">
+                  <div className="flex justify-between items-center text-slate-600">
+                    <span>Montant total de l'acte :</span>
+                    <span className="font-semibold">{formatCurrency(weekendDoctorPayForm.consultationTotalAmount)}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-rose-700 font-bold">
+                    <span>Rémunération versée au médecin :</span>
+                    <span>-{formatCurrency(parseFloat(weekendDoctorPayForm.amount) || 0)}</span>
+                  </div>
+                  <div className="pt-1 border-t border-slate-200 flex justify-between items-center text-blue-900 font-black">
+                    <span>★ Part restante conservée en Grande Caisse :</span>
+                    <span className="font-mono text-sm">
+                      +{formatCurrency(Math.max(0, weekendDoctorPayForm.consultationTotalAmount - (parseFloat(weekendDoctorPayForm.amount) || 0)))}
+                    </span>
+                  </div>
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-bold text-slate-700 mb-1">Week-end concerné</label>
+                  <label className="block font-bold text-slate-700 mb-1">Période / Date de l'acte</label>
                   <input
                     type="text"
                     value={weekendDoctorPayForm.weekendPeriod}
                     onChange={(e) =>
                       setWeekendDoctorPayForm({ ...weekendDoctorPayForm, weekendPeriod: e.target.value })
                     }
-                    placeholder="Ex: Week-end du 21-22 Nov 2026"
+                    placeholder="Ex: Actes du 24/11/2026"
                     className="w-full px-3 py-2 rounded-lg border border-slate-200"
                   />
                 </div>
@@ -5866,7 +6108,7 @@ export default function ExpensesClient({
                   onChange={(e) =>
                     setWeekendDoctorPayForm({ ...weekendDoctorPayForm, notes: e.target.value })
                   }
-                  placeholder="Néant (ou nb de consultations, garde samedi/dimanche...)"
+                  placeholder="Néant (ou précision sur l'acte...)"
                   className="w-full px-3 py-2 rounded-lg border border-slate-200"
                 />
               </div>
@@ -5893,7 +6135,7 @@ export default function ExpensesClient({
       )}
 
       {/* ========================================================================= */}
-      {/* MODAL IMPRESSION A4 : REÇU HONORAIRES MÉDECIN (BUDGET WEEK-END)           */}
+      {/* MODAL IMPRESSION A4 : REÇU HONORAIRES MÉDECIN (ACTES SPÉCIFIQUES)         */}
       {/* ========================================================================= */}
       {printedWeekendPayment && (
         <div
@@ -5905,13 +6147,13 @@ export default function ExpensesClient({
           <div className="no-print flex items-center justify-between w-full max-w-2xl my-3 p-3 bg-slate-900 rounded-xl text-white shadow-lg border border-slate-800">
             <div className="flex items-center gap-2 text-xs font-bold">
               <Stethoscope className="w-4 h-4 text-violet-400" />
-              <span>Reçu Honoraires Médecin Week-end • Page A4</span>
+              <span>Reçu Rémunération Médecin (Acte Spécifique) • Page A4</span>
             </div>
             <div className="flex items-center gap-2">
               <button
                 type="button"
                 onClick={() =>
-                  handlePrintCleanA4(`Recu_Medecin_Weekend_${printedWeekendPayment.reference || 'PAY'}_Betesda`)
+                  handlePrintCleanA4(`Recu_Medecin_ActeSpecifique_${printedWeekendPayment.reference || 'PAY'}_Betesda`)
                 }
                 className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black flex items-center gap-1.5 cursor-pointer"
               >
@@ -5939,10 +6181,10 @@ export default function ExpensesClient({
               </div>
               <div className="text-right">
                 <div className="inline-block px-3 py-1 rounded-lg bg-violet-100 text-violet-900 font-black text-xs uppercase">
-                  Reçu Honoraires Médecin Week-end
+                  Reçu Rémunération Médecin (Acte Spécifique)
                 </div>
                 <div className="font-mono font-bold text-xs mt-1">
-                  Réf : {printedWeekendPayment.reference || 'PAY-MED-WE'}
+                  Réf : {printedWeekendPayment.reference || 'PAY-MED-SPEC'}
                 </div>
                 <div className="text-xs text-slate-500">
                   Date : {formatDate(printedWeekendPayment.transactionDate)}
@@ -5953,14 +6195,14 @@ export default function ExpensesClient({
             <div className="p-4 rounded-xl bg-violet-50/60 border border-violet-200 space-y-2 text-xs">
               <div className="flex justify-between">
                 <span className="text-slate-600 font-semibold">Source des fonds :</span>
-                <strong className="text-violet-900">Budget Consultations Week-end (Samedi &amp; Dimanche)</strong>
+                <strong className="text-violet-900">Grande Caisse • Budget Actes Spécifiques</strong>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-600 font-semibold">Mode de règlement :</span>
                 <strong>{printedWeekendPayment.paymentMethod}</strong>
               </div>
               <div className="pt-2 border-t border-violet-200">
-                <span className="text-slate-600 font-semibold block">Détails / Bénéficiaire :</span>
+                <span className="text-slate-600 font-semibold block">Détails &amp; Répartition Financière :</span>
                 <p className="font-bold text-slate-900 mt-0.5">{printedWeekendPayment.description}</p>
               </div>
             </div>
@@ -5976,7 +6218,7 @@ export default function ExpensesClient({
 
             <div className="grid grid-cols-2 gap-8 pt-6 text-xs">
               <div className="border border-slate-300 rounded-xl p-4 h-28 flex flex-col justify-between">
-                <div className="font-bold text-slate-700">Signature Comptabilité / Direction</div>
+                <div className="font-bold text-slate-700">Signature Grande Caisse / Direction</div>
                 <div className="text-[11px] text-slate-400">
                   {printedWeekendPayment.performedBy
                     ? `${printedWeekendPayment.performedBy.firstName} ${printedWeekendPayment.performedBy.lastName}`

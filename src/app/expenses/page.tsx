@@ -93,13 +93,12 @@ export default async function ExpensesPage() {
           orderBy: { paymentDate: 'desc' },
           take: 200,
         }),
-    isReceptionist
-      ? Promise.resolve([])
-      : prisma.clinicMedicineRequisition.findMany({
-          where: { clinicId: session.clinicId },
-          orderBy: { date: 'desc' },
-          take: 100,
-        }),
+    // Fiches de réquisition / commande médicaments clinique (accessibles à Petite Caisse et Grande Caisse)
+    prisma.clinicMedicineRequisition.findMany({
+      where: { clinicId: session.clinicId },
+      orderBy: { date: 'desc' },
+      take: 100,
+    }),
     prisma.medicine.findMany({
       where: { clinicId: session.clinicId, isActive: true },
       select: {
@@ -172,29 +171,38 @@ export default async function ExpensesPage() {
       },
       orderBy: { createdAt: 'asc' },
     }),
-    // Consultations récentes (filtrées Samedi/Dimanche ci-dessous) pour l'onglet Consultations Week-end
-    isReceptionist
-      ? Promise.resolve([])
-      : prisma.consultation.findMany({
-          where: { patient: { clinicId: session.clinicId } },
+    // Consultations récentes (actes spécifiques & week-end) pour l'onglet Actes Spécifiques
+    prisma.consultation.findMany({
+      where: { patient: { clinicId: session.clinicId } },
+      include: {
+        patient: { select: { id: true, firstName: true, lastName: true, patientNumber: true, phone: true } },
+        doctor: {
           include: {
-            patient: { select: { id: true, firstName: true, lastName: true, patientNumber: true, phone: true } },
-            doctor: {
-              include: {
-                user: { select: { firstName: true, lastName: true } },
-                specialty: { select: { name: true } },
-              },
-            },
-            invoice: { include: { payments: true } },
+            user: { select: { firstName: true, lastName: true } },
+            specialty: { select: { name: true } },
           },
-          orderBy: { consultationDate: 'desc' },
-          take: 500,
-        }),
+        },
+        invoice: { include: { payments: true, items: true } },
+      },
+      orderBy: { consultationDate: 'desc' },
+      take: 500,
+    }),
   ]);
 
-  const weekendConsultations = (allConsultationsForWeekend || []).filter((c: any) => {
+  const specificActConsultations = (allConsultationsForWeekend || []).filter((c: any) => {
     const day = new Date(c.consultationDate).getDay();
-    return day === 0 || day === 6;
+    const isWeekend = day === 0 || day === 6;
+    const hasSpecificFlag =
+      (c.doctorNotes && c.doctorNotes.includes('[ACTE SPÉCIFIQUE]')) ||
+      (c.reason && (c.reason.toLowerCase().includes('spécifique') || c.reason.toLowerCase().includes('specifique'))) ||
+      (c.invoice?.notes && c.invoice.notes.includes('[ACTE SPÉCIFIQUE]')) ||
+      (c.invoice?.items &&
+        c.invoice.items.some(
+          (it: any) =>
+            (it.description || '').toLowerCase().includes('spécifique') ||
+            (it.description || '').toLowerCase().includes('specifique')
+        ));
+    return isWeekend || Boolean(hasSpecificFlag);
   });
 
   return (
@@ -212,7 +220,7 @@ export default async function ExpensesPage() {
         initialDentalCashTransactions={JSON.parse(JSON.stringify(dentalCashTransactions))}
         staffMedicineSales={JSON.parse(JSON.stringify(staffMedicineSales))}
         doctors={JSON.parse(JSON.stringify(doctors))}
-        initialWeekendConsultations={JSON.parse(JSON.stringify(weekendConsultations))}
+        initialWeekendConsultations={JSON.parse(JSON.stringify(specificActConsultations))}
       />
     </DashboardLayout>
   );
