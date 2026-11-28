@@ -3963,7 +3963,7 @@ export default function ExpensesClient({
                 <span>Paiements Honoraires Médecins Décaissés ({filteredWeekendDoctorPayments.length})</span>
               </h3>
               <span className="text-xs font-black text-rose-700">
-                Total versé : -{formatCurrency(filteredWeekendDoctorPayments.reduce((s, p) => s + p.amount, 0))}
+                Total versé : {formatCurrency(filteredWeekendDoctorPayments.reduce((s, p) => s + p.amount, 0))}
               </span>
             </div>
 
